@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  bot1:
+    build: .
+    container_name: playwright-bot-1
+    volumes:
+      - ./profiles/bot1:/app/profiles/bot1
+      - ./config:/app/config:ro
+    environment:
+      - BOT_NAME=bot1
+      - PROFILE_PATH=/app/profiles/bot1
+      - NODE_ENV=production
+    env_file:
+      - config/.env
+    restart: unless-stopped
+    networks:
+      - bot-network
+
+  bot2:
+    build: .
+    container_name: playwright-bot-2
+    volumes:
+      - ./profiles/bot2:/app/profiles/bot2
+      - ./config:/app/config:ro
+    environment:
+      - BOT_NAME=bot2
+      - PROFILE_PATH=/app/profiles/bot2
+      - NODE_ENV=production
+    env_file:
+      - config/.env
+    restart: unless-stopped
+    networks:
+      - bot-network
+
+networks:
+  bot-network:
+    driver: bridge
+
+volumes:
+  bot1-profiles:
+    driver: local
+  bot2-profiles:
+    driver: local

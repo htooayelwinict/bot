@@ -1,0 +1,62 @@
+{
+  "bots": {
+    "bot1": {
+      "name": "Primary Bot",
+      "headless": false,
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "timeout": 30000,
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "credentials": {
+        "username": "bot1_username",
+        "password": "bot1_password"
+      },
+      "targetUrls": {
+        "login": "https://example.com/login",
+        "dashboard": "https://example.com/dashboard"
+      }
+    },
+    "bot2": {
+      "name": "Secondary Bot",
+      "headless": true,
+      "viewport": {
+        "width": 1366,
+        "height": 768
+      },
+      "timeout": 30000,
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "credentials": {
+        "username": "bot2_username",
+        "password": "bot2_password"
+      },
+      "targetUrls": {
+        "login": "https://example.com/login",
+        "dashboard": "https://example.com/dashboard"
+      }
+    }
+  },
+  "common": {
+    "retryAttempts": 3,
+    "retryDelay": 5000,
+    "screenshots": true,
+    "screenshotsPath": "./screenshots",
+    "logs": {
+      "enabled": true,
+      "level": "info",
+      "filePath": "./logs/bot.log"
+    },
+    "humanBehavior": {
+      "typingDelay": {
+        "min": 50,
+        "max": 150
+      },
+      "mouseMovement": true,
+      "randomDelays": {
+        "min": 1000,
+        "max": 3000
+      }
+    }
+  }
+}
