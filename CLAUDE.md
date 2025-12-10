@@ -78,3 +78,6 @@ src/
 4. Wait for manual authentication (3-minute timeout)
 5. Save new session for future use
 6. Take screenshots for verification
+
+### GitHub Context
+- [Issue #1: Claude Context 2024-12-11 10:00](https://github.com/htooayelwinict/bot/issues/1)
