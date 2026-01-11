@@ -10,13 +10,16 @@ Matches HumanInLoopLogin behavior from human-in-loop-login.ts:
 - Login status detection via DOM selectors
 """
 
+import asyncio
 import json
 import time
 from pathlib import Path
 from typing import Optional
 
-from playwright.sync_api import Browser, BrowserContext, Page, BrowserType
-
+from playwright.async_api import BrowserContext as AsyncBrowserContext
+from playwright.async_api import BrowserType as AsyncBrowserType
+from playwright.async_api import Page as AsyncPage
+from playwright.sync_api import BrowserContext, BrowserType, Page
 
 # =============================================================================
 # Configuration (matches human-in-loop-login.ts)
@@ -80,6 +83,8 @@ class FacebookSessionManager:
         self.headless = headless
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
+        self.async_context: Optional[AsyncBrowserContext] = None
+        self.async_page: Optional[AsyncPage] = None
 
     # -------------------------------------------------------------------------
     # Public API (matches human-in-loop-login.ts interface)
@@ -193,6 +198,117 @@ class FacebookSessionManager:
         return self.context
 
     # -------------------------------------------------------------------------
+    # Async API Methods
+    # -------------------------------------------------------------------------
+
+    async def get_or_create_session_async(self, browser_type: AsyncBrowserType) -> tuple[AsyncBrowserContext, AsyncPage, bool]:
+        """Get existing session or create new one (async version).
+
+        Args:
+            browser_type: Playwright AsyncBrowserType (e.g., playwright.chromium)
+
+        Returns:
+            (context, page, was_restored) - was_restored is True if session was restored
+        """
+        if self._has_saved_session():
+            context, page, restored = await self._restore_session_async(browser_type)
+            if restored:
+                return context, page, True
+
+        return await self._create_new_session_async(browser_type)
+
+    async def start_login_async(self) -> bool:
+        """Start manual login flow (3-minute timeout) - async version.
+
+        Returns:
+            True if login successful, False if timeout
+        """
+        from playwright.async_api import async_playwright
+
+        print("🚀 Starting human-in-the-loop login process...")
+        print("⏱️  You have 3 minutes to log in manually")
+
+        async with async_playwright() as p:
+            self.async_context, self.async_page, _ = await self._create_new_session_async(p.chromium)
+
+            if not await self._go_to_facebook_async():
+                return False
+
+            login_success = await self._wait_for_login_async()
+
+            if login_success:
+                print("✅ Login successful! Saving session...")
+                await self.save_session_async()
+                return True
+            else:
+                print("❌ Login timeout or failed")
+                return False
+
+    async def restore_session_async(self, browser_type: AsyncBrowserType) -> bool:
+        """Restore saved session (async version).
+
+        Args:
+            browser_type: Playwright AsyncBrowserType
+
+        Returns:
+            True if session valid and logged in, False otherwise
+        """
+        print("🔄 Attempting to restore saved session...")
+
+        if not self._has_saved_session():
+            print("❌ No saved session found")
+            return False
+
+        self.async_context, self.async_page, _ = await self._restore_session_async(browser_type)
+
+        if not await self._go_to_facebook_async():
+            await self.close_async()
+            return False
+
+        if await self._is_logged_in_async():
+            print("✅ Successfully restored logged-in session")
+            return True
+        else:
+            print("❌ Session expired - need to log in again")
+            await self.close_async()
+            return False
+
+    async def save_session_async(self) -> None:
+        """Save current session (cookies and storage state) - async version."""
+        if not self.async_context:
+            return
+
+        self.profile_dir.mkdir(parents=True, exist_ok=True)
+
+        cookies = await self.async_context.cookies()
+        cookies_file = self.profile_dir / "cookies.json"
+        cookies_file.write_text(json.dumps(cookies, indent=2))
+        print(f"💾 Saved {len(cookies)} cookies to {cookies_file}")
+
+        state = await self.async_context.storage_state()
+        state_file = self.profile_dir / "state.json"
+        state_file.write_text(json.dumps(state, indent=2))
+        print(f"💾 Saved storage state to {state_file}")
+
+    async def close_async(self) -> None:
+        """Close browser context (async version)."""
+        if self.async_page:
+            await self.async_page.close()
+            self.async_page = None
+
+        if self.async_context:
+            await self.async_context.close()
+            self.async_context = None
+
+    def get_async_page(self) -> Optional[AsyncPage]:
+        """Get the current async page."""
+        return self.async_page
+
+    def get_async_context(self) -> Optional[AsyncBrowserContext]:
+        """Get the current async browser context."""
+        return self.async_context
+
+    # -------------------------------------------------------------------------
     # Private Methods
     # -------------------------------------------------------------------------
 
@@ -296,6 +412,96 @@ class FacebookSessionManager:
         """Check if user is logged in to Facebook."""
         return _check_login_status(self.page)
 
+    # -------------------------------------------------------------------------
+    # Async Private Methods
+    # -------------------------------------------------------------------------
+
+    async def _launch_context_async(self, browser_type: AsyncBrowserType, *, restored: bool) -> tuple[AsyncBrowserContext, AsyncPage, bool]:
+        """Launch browser context with persistent profile (async version)."""
+        if not restored:
+            print("🚀 Creating new browser session...")
+
+        self._cleanup_lock_files()
+
+        self.async_context = await browser_type.launch_persistent_context(
+            user_data_dir=str(self.profile_dir),
+            headless=self.headless,
+            args=BROWSER_ARGS,
+            viewport={"width": 1920, "height": 1080},
+            locale="en-US",
+            timezone_id="America/New_York",
+            permissions=["geolocation", "notifications"],
+            ignore_https_errors=True,
+        )
+
+        pages = self.async_context.pages
+        self.async_page = pages[0] if pages else await self.async_context.new_page()
+
+        return self.async_context, self.async_page, restored
+
+    async def _create_new_session_async(self, browser_type: AsyncBrowserType) -> tuple[AsyncBrowserContext, AsyncPage, bool]:
+        """Create a new browser session with persistent context (async version)."""
+        return await self._launch_context_async(browser_type, restored=False)
+
+    async def _restore_session_async(self, browser_type: AsyncBrowserType) -> tuple[AsyncBrowserContext, AsyncPage, bool]:
+        """Restore existing session from profile directory (async version)."""
+        return await self._launch_context_async(browser_type, restored=True)
+
+    async def _go_to_facebook_async(self) -> bool:
+        """Navigate to Facebook with retry logic (async version)."""
+        if not self.async_page:
+            return False
+
+        print("📍 Navigating to Facebook...")
+        max_attempts = 3
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                print(f"   Attempt {attempt} of {max_attempts}...")
+                await self.async_page.goto("https://www.facebook.com", wait_until="domcontentloaded", timeout=60000)
+                await asyncio.sleep(2)
+
+                page_title = await self.async_page.title()
+                if "Facebook" in page_title or "Log In" in page_title:
+                    print("✅ Facebook page loaded successfully")
+                    return True
+            except Exception as e:
+                print(f"   ⚠️ Navigation attempt {attempt} failed: {e}")
+                if attempt < max_attempts:
+                    await asyncio.sleep(3)
+
+        print("❌ Failed to navigate to Facebook")
+        return False
+
+    async def _wait_for_login_async(self) -> bool:
+        """Wait for user to complete manual login (3-minute timeout) - async version."""
+        if not self.async_page:
+            return False
+
+        max_wait_time = 180000  # 3 minutes in milliseconds
+        check_interval = 2000
+        elapsed = 0
+
+        print("⏳ Waiting for you to log in...")
+        print("   Browser window is open - please log in manually")
+
+        while elapsed < max_wait_time:
+            if await self._is_logged_in_async():
+                return True
+
+            remaining_seconds = (max_wait_time - elapsed) // 1000
+            if elapsed % 10000 == 0:
+                print(f"   ⏰ Time remaining: {remaining_seconds}s")
+
+            await asyncio.sleep(check_interval / 1000)
+            elapsed += check_interval
+
+        return False
+
+    async def _is_logged_in_async(self) -> bool:
+        """Check if user is logged in to Facebook (async version)."""
+        return await _check_login_status_async(self.async_page)
+
 
 # =============================================================================
 # Standalone Functions (for test fixtures)
@@ -369,6 +575,74 @@ def wait_for_login(page: Page, max_wait_seconds: int = 180) -> bool:
     return False
 
 
+async def _check_login_status_async(page: Optional[AsyncPage]) -> bool:
+    """Check if user is logged in to Facebook (async version)."""
+    if not page:
+        return False
+
+    # Check for login form (means NOT logged in)
+    for selector in LOGIN_SELECTORS:
+        try:
+            if await page.query_selector(selector):
+                return False
+        except Exception:
+            continue
+
+    # Check for logged-in indicators
+    for selector in LOGGED_IN_SELECTORS:
+        try:
+            if await page.query_selector(selector):
+                return True
+        except Exception:
+            continue
+
+    return False
+
+
+async def check_login_status_async(page: AsyncPage) -> bool:
+    """Check if user is logged in to Facebook (async version)."""
+    return await _check_login_status_async(page)
+
+
+async def wait_for_login_async(page: AsyncPage, max_wait_seconds: int = 180) -> bool:
+    """Wait for user to complete Facebook login (async version).
+
+    Args:
+        page: Playwright async page object
+        max_wait_seconds: Maximum time to wait (default 180s)
+
+    Returns:
+        True if login detected, False if timeout
+    """
+    print("\n" + "=" * 60)
+    print("⚠️  NOT LOGGED IN TO FACEBOOK")
+    print("=" * 60)
+    print("\nPlease log in manually:")
+    print("1. Browser window should be visible")
+    print("2. Complete Facebook login in the browser")
+    print("3. Script will continue automatically after login\n")
+    print(f"Waiting for login (max {max_wait_seconds} seconds)...")
+    print("=" * 60 + "\n")
+
+    elapsed = 0
+    check_interval = 2
+
+    while elapsed < max_wait_seconds:
+        if await check_login_status_async(page):
+            print("✅ Login detected!\n")
+            return True
+
+        await asyncio.sleep(check_interval)
+        elapsed += check_interval
+
+        if elapsed % 10 == 0:
+            remaining = max_wait_seconds - elapsed
+            print(f"   ⏰ Still waiting... ({remaining}s remaining)")
+
+    print("❌ Login timeout\n")
+    return False
+
+
 # =============================================================================
 # Global Session Management (for tool decorators)
 # =============================================================================
@@ -397,6 +671,16 @@ def get_current_context() -> Optional[BrowserContext]:
     return getattr(_global_session, "context", None)
 
 
+def get_current_async_page() -> Optional[AsyncPage]:
+    """Get the current async page from the global session."""
+    return getattr(_global_session, "async_page", None)
+
+
+def get_current_async_context() -> Optional[AsyncBrowserContext]:
+    """Get the current async context from the global session."""
+    return getattr(_global_session, "async_context", None)
+
+
 # =============================================================================
 # Backward Compatibility Aliases
 # =============================================================================
@@ -416,10 +700,14 @@ __all__ = [
     "PlaywrightSession",
     "check_login_status",
     "wait_for_login",
+    "check_login_status_async",
+    "wait_for_login_async",
     "set_global_session",
     "get_global_session",
     "get_current_page",
     "get_current_context",
+    "get_current_async_page",
+    "get_current_async_context",
     "DEFAULT_PROFILE_DIR",
     "BROWSER_ARGS",
     "LOGIN_SELECTORS",

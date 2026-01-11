@@ -7,13 +7,18 @@ from pathlib import Path
 # Suppress deprecation warnings for this test file
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-from src.session.playwright_session import (
-    PlaywrightSession,
-    set_session,
+from src.session import (
+    FacebookSessionManager,
+    set_global_session,
     get_current_page,
     get_current_context,
-    get_current_session,
+    get_global_session,
 )
+
+# Alias for backward compatibility with tests
+PlaywrightSession = FacebookSessionManager
+set_session = set_global_session
+get_current_session = get_global_session
 
 
 class TestPlaywrightSession:
@@ -22,15 +27,14 @@ class TestPlaywrightSession:
     def test_session_initialization(self):
         """Test that session initializes with correct defaults."""
         session = PlaywrightSession()
-        assert session.profile_path == Path("./profiles/bot-facebook")
+        assert session.profile_dir == Path("./profiles/facebook")
         assert session.headless is False
-        assert session.slow_mo == 100
 
     def test_session_with_custom_profile(self, tmp_path):
         """Test session initialization with custom profile path."""
         custom_path = tmp_path / "custom-profile"
-        session = PlaywrightSession(profile_path=str(custom_path))
-        assert session.profile_path == custom_path
+        session = PlaywrightSession(profile_dir=custom_path)
+        assert session.profile_dir == custom_path
 
     def test_cleanup_lock_files(self, tmp_path):
         """Test lock file cleanup."""
@@ -40,7 +44,7 @@ class TestPlaywrightSession:
         (profile_path / "SingletonLock").touch()
         (profile_path / "SingletonSocket").touch()
 
-        session = PlaywrightSession(profile_path=str(profile_path))
+        session = PlaywrightSession(profile_dir=profile_path)
         session._cleanup_lock_files()
 
         assert not (profile_path / "SingletonLock").exists()

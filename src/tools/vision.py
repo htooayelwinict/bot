@@ -9,16 +9,14 @@ import os
 import time
 from typing import Optional
 
-from src.session import get_current_page
-from src.tools.base import session_tool, ToolResult
-
+from src.tools.base import ToolResult, async_session_tool
 
 # Screenshot cache for avoiding redundant captures
 _screenshot_cache: dict[str, dict] = {}
 
 
-@session_tool
-def capture_screenshot_for_analysis(
+@async_session_tool
+async def capture_screenshot_for_analysis(
     filename: str = "screenshot-{timestamp}",
     full_page: bool = False,
     page=None,
@@ -53,7 +51,7 @@ def capture_screenshot_for_analysis(
     path = f"./screenshots/{filename}"
 
     # Capture screenshot
-    page.screenshot(path=path, full_page=full_page)
+    await page.screenshot(path=path, full_page=full_page)
 
     # Get metadata
     stats = os.stat(path)
@@ -76,7 +74,7 @@ def capture_screenshot_for_analysis(
 - Path: {path}
 - Size: {size_str}
 - URL: {page.url}
-- Title: {page.title()}
+- Title: {await page.title()}
 - Timestamp: {datetime.now().isoformat()}
 
 The screenshot is available at: {path}
@@ -86,13 +84,13 @@ Base64 encoded image available for vision analysis.""",
             "base64": base64_image,
             "size": stats.st_size,
             "url": page.url,
-            "title": page.title(),
+            "title": await page.title(),
         },
     ).to_string()
 
 
-@session_tool
-def capture_screenshot_with_metadata(
+@async_session_tool
+async def capture_screenshot_with_metadata(
     filename: str = "screenshot-{timestamp}",
     full_page: bool = False,
     cache_key: Optional[str] = None,
@@ -125,7 +123,7 @@ def capture_screenshot_with_metadata(
     path = f"./screenshots/{filename}"
 
     # Capture screenshot
-    page.screenshot(path=path, full_page=full_page)
+    await page.screenshot(path=path, full_page=full_page)
 
     # Get metadata
     stats = os.stat(path)
@@ -134,7 +132,7 @@ def capture_screenshot_with_metadata(
         "size": stats.st_size,
         "timestamp": datetime.now().isoformat(),
         "url": page.url,
-        "title": page.title(),
+        "title": await page.title(),
     }
 
     # Format size nicely
@@ -153,7 +151,7 @@ def capture_screenshot_with_metadata(
         f"Screenshot saved to {path}\n"
         f"Size: {size_str}\n"
         f"URL: {page.url}\n"
-        f"Title: {page.title()}"
+        f"Title: {await page.title()}"
     )
 
     return ToolResult(success=True, content=result, data=metadata).to_string()

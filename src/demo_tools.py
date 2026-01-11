@@ -5,13 +5,14 @@ Usage:
 """
 
 from unittest.mock import Mock
+
+from src.tools.interaction import browser_click
 from src.tools.navigation import (
+    browser_get_page_info,
     browser_navigate,
     browser_navigate_back,
     browser_screenshot,
-    browser_get_page_info,
 )
-from src.tools.interaction import browser_click
 
 
 def demo_navigation_tools():

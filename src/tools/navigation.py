@@ -3,16 +3,16 @@
 Ported from src/mcp-tools/tools/navigation.ts
 """
 
+import asyncio
 import json
 import time
 from pathlib import Path
 from typing import Literal, Optional
 
+from playwright.async_api import Page
 from pydantic import BaseModel, Field
-from playwright.sync_api import Page
 
-from src.tools.base import session_tool, ToolResult
-
+from src.tools.base import ToolResult, async_session_tool
 
 # ============= Tool Argument Schemas =============
 
@@ -71,8 +71,8 @@ class GetPageInfoArgs(BaseModel):
 # ============= Tool Functions =============
 
 
-@session_tool
-def browser_navigate(url: str, wait_until: str = "load", timeout: int = 30000, page: Page = None) -> str:
+@async_session_tool
+async def browser_navigate(url: str, wait_until: str = "load", timeout: int = 30000, page: Page = None) -> str:
     """Navigate to a specific URL. Waits for the page to load before returning.
 
     Args:
@@ -84,17 +84,17 @@ def browser_navigate(url: str, wait_until: str = "load", timeout: int = 30000, p
     Returns:
         Success message with page title and final URL
     """
-    page.goto(url, wait_until=wait_until, timeout=timeout)
+    await page.goto(url, wait_until=wait_until, timeout=timeout)
 
     return ToolResult(
         success=True,
-        content=f"Navigated to {url}\nPage title: {page.title()}\nFinal URL: {page.url}",
-        data={"url": page.url, "title": page.title()},
+        content=f"Navigated to {url}\nPage title: {await page.title()}\nFinal URL: {page.url}",
+        data={"url": page.url, "title": await page.title()},
     ).to_string()
 
 
-@session_tool
-def browser_navigate_back(page: Page = None) -> str:
+@async_session_tool
+async def browser_navigate_back(page: Page = None) -> str:
     """Go back to the previous page in browser history.
 
     Args:
@@ -103,8 +103,8 @@ def browser_navigate_back(page: Page = None) -> str:
     Returns:
         Success message with current URL
     """
-    page.go_back()
-    time.sleep(0.5)  # Small wait for navigation to complete
+    await page.go_back()
+    await asyncio.sleep(0.5)  # Small wait for navigation to complete
 
     return ToolResult(
         success=True,
@@ -113,8 +113,8 @@ def browser_navigate_back(page: Page = None) -> str:
     ).to_string()
 
 
-@session_tool
-def browser_screenshot(
+@async_session_tool
+async def browser_screenshot(
     filename: str = "screenshot-{timestamp}",
     type: str = "png",
     full_page: bool = False,
@@ -153,7 +153,7 @@ def browser_screenshot(
     if type == "jpeg" and quality is not None:
         screenshot_options["quality"] = quality
 
-    page.screenshot(**screenshot_options)
+    await page.screenshot(**screenshot_options)
 
     # Get file size
     file_size = file_path.stat().st_size
@@ -171,8 +171,8 @@ def browser_screenshot(
     ).to_string()
 
 
-@session_tool
-def browser_get_page_info(page: Page = None) -> str:
+@async_session_tool
+async def browser_get_page_info(page: Page = None) -> str:
     """Get information about the current page including URL, title, and meta information.
 
     Args:
@@ -181,7 +181,7 @@ def browser_get_page_info(page: Page = None) -> str:
     Returns:
         JSON string with page information
     """
-    info = page.evaluate(
+    info = await page.evaluate(
         """() => ({
         url: window.location.href,
         title: document.title,

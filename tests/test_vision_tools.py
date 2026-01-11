@@ -16,7 +16,7 @@ from src.tools.vision import (
     cleanup_old_screenshots,
     get_cached_screenshot,
 )
-from src.session.profile_manager import set_global_session as set_session
+from src.session import set_global_session as set_session
 
 
 @pytest.fixture
