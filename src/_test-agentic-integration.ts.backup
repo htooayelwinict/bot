@@ -1,0 +1,198 @@
+/**
+ * Comprehensive test of the agentic tools integration
+ * Tests all components working together
+ */
+
+import { AgentInterface } from './agentic-tools/agent-interface';
+import { ToolRegistry } from './agentic-tools/tool-registry';
+
+async function testAgenticIntegration() {
+  console.log('🧪 TESTING AGENTIC TOOLS INTEGRATION');
+  console.log('='.repeat(60));
+
+  const agent = new AgentInterface();
+
+  try {
+    // Test 1: Initialization
+    console.log('\n1️⃣ Testing Initialization');
+    await agent.initialize('./profiles/agentic-test');
+    console.log('   ✅ Agent initialized successfully');
+
+    // Test 2: Get tools for different AI frameworks
+    console.log('\n2️⃣ Testing Tool Schemas');
+
+    const openaiTools = agent.getOpenAITools();
+    console.log(`   ✅ OpenAI tools: ${openaiTools.length} available`);
+
+    const claudeTools = agent.getClaudeTools();
+    console.log(`   ✅ Claude tools: ${claudeTools.length} available`);
+
+    // Test 3: Individual tool execution
+    console.log('\n3️⃣ Testing Individual Tool Execution');
+
+    // Navigation test
+    const navResult = await agent.executeTool('browser_navigate', {
+      url: 'https://httpbin.org'
+    });
+    console.log(`   ✅ Navigation: ${navResult.message}`);
+
+    // Wait test
+    await agent.executeTool('browser_wait', { time: 1 });
+    console.log('   ✅ Wait: 1 second');
+
+    // Screenshot test
+    const screenshotResult = await agent.executeTool('browser_screenshot', {
+      filename: 'agentic-test-screenshot'
+    });
+    console.log(`   ✅ Screenshot: ${screenshotResult.filename}`);
+
+    // Test 4: Multiple tools execution
+    console.log('\n4️⃣ Testing Multiple Tools Execution');
+
+    const multiResults = await agent.executeTools([
+      { name: 'browser_evaluate', args: { script: 'document.title' } },
+      { name: 'browser_snapshot', args: {} },
+      { name: 'browser_resize', args: { width: 800, height: 600 } }
+    ]);
+
+    console.log(`   ✅ Evaluated title: ${multiResults[0].result}`);
+    console.log(`   ✅ Snapshot URL: ${multiResults[1].url}`);
+    console.log(`   ✅ Resized to: 800x600`);
+
+    // Test 5: Helper methods
+    console.log('\n5️⃣ Testing Helper Methods');
+
+    await agent.navigate('https://httpbin.org/forms/post');
+    console.log('   ✅ Navigate helper');
+
+    await agent.type('input[name="custname"]', 'Test User');
+    console.log('   ✅ Type helper');
+
+    await agent.wait(1);
+    console.log('   ✅ Wait helper');
+
+    const pageInfo = await agent.getPageInfo();
+    console.log(`   ✅ Page info: ${pageInfo.title}`);
+
+    // Test 6: Error handling
+    console.log('\n6️⃣ Testing Error Handling');
+
+    try {
+      await agent.click('#non-existent-element');
+    } catch (error) {
+      console.log(`   ✅ Error caught: ${error instanceof Error ? error.message : 'Unknown'}`);
+    }
+
+    // Test 7: Tool listing
+    console.log('\n7️⃣ Testing Tool Listing');
+    const toolsList = agent.listTools();
+    console.log(`   ✅ Tools listed:\n${toolsList}`);
+
+    // Test 8: Performance check
+    console.log('\n8️⃣ Testing Performance');
+    const start = Date.now();
+
+    await agent.executeTools([
+      { name: 'browser_wait', args: { time: 0.1 } },
+      { name: 'browser_evaluate', args: { script: '1+1' } },
+      { name: 'browser_evaluate', args: { script: '2+2' } },
+      { name: 'browser_evaluate', args: { script: '3+3' } },
+      { name: 'browser_evaluate', args: { script: '4+4' } }
+    ]);
+
+    const duration = Date.now() - start;
+    console.log(`   ✅ 5 operations in ${duration}ms`);
+
+    // Test 9: Integration with registry
+    console.log('\n9️⃣ Testing Registry Integration');
+    const registry = new ToolRegistry();
+    await registry.initialize(agent['agentInterface']['tools']);
+
+    const toolSchemas = registry.getAllToolSchemas();
+    console.log(`   ✅ Registry schemas: ${toolSchemas.length}`);
+
+    const toolDocs = registry.getToolDocumentation();
+    console.log(`   ✅ Tool docs: ${Object.keys(toolDocs.tools || {}).length} tools documented`);
+
+    console.log('\n✅ ALL TESTS PASSED!');
+    console.log('\n📊 Summary:');
+    console.log('   - Agent initialization: ✅');
+    console.log('   - Tool schema generation: ✅');
+    console.log('   - Individual tool execution: ✅');
+    console.log('   - Multiple tool execution: ✅');
+    console.log('   - Helper methods: ✅');
+    console.log('   - Error handling: ✅');
+    console.log('   - Tool listing: ✅');
+    console.log('   - Performance: ✅');
+    console.log('   - Registry integration: ✅');
+
+  } catch (error) {
+    console.error('\n❌ Test failed:', error);
+  } finally {
+    await agent.close();
+    console.log('\n🔚 Test completed');
+  }
+}
+
+// Test framework integration examples
+async function testFrameworkExamples() {
+  console.log('\n\n🔌 FRAMEWORK INTEGRATION EXAMPLES');
+  console.log('='.repeat(60));
+
+  const agent = new AgentInterface();
+  await agent.initialize();
+
+  // OpenAI style function call
+  console.log('\n📝 OpenAI Function Call Example:');
+  const openaiCall = {
+    name: 'browser_navigate',
+    arguments: JSON.stringify({ url: 'https://example.com' })
+  };
+  console.log(`   Call: ${openaiCall.name}(${openaiCall.arguments})`);
+
+  const result = await agent.executeTool(
+    openaiCall.name,
+    JSON.parse(openaiCall.arguments)
+  );
+  console.log(`   Result: ${result.message}`);
+
+  // Claude style tool use
+  console.log('\n🔧 Claude Tool Use Example:');
+  const claudeTool = {
+    name: 'browser_evaluate',
+    input: { script: 'document.title' }
+  };
+  console.log(`   Tool: ${claudeTool.name}(${JSON.stringify(claudeTool.input)})`);
+
+  const claudeResult = await agent.executeTool(claudeTool.name, claudeTool.input);
+  console.log(`   Result: ${claudeResult.result}`);
+
+  // Multiple tools
+  console.log('\n🔗 Multiple Tools Example:');
+  const sequence = [
+    { name: 'browser_navigate', args: { url: 'https://httpbin.org' } },
+    { name: 'browser_wait', args: { time: 1 } },
+    { name: 'browser_screenshot', args: { filename: 'sequence-test' } },
+    { name: 'browser_evaluate', args: { script: 'window.location.href' } }
+  ];
+
+  for (const step of sequence) {
+    console.log(`   → ${step.name}(${JSON.stringify(step.args)})`);
+    await agent.executeTool(step.name, step.args);
+  }
+  console.log('   ✅ Sequence completed');
+
+  await agent.close();
+}
+
+// Run tests
+async function runAllTests() {
+  await testAgenticIntegration();
+  await testFrameworkExamples();
+}
+
+if (require.main === module) {
+  runAllTests().catch(console.error);
+}
+
+export { testAgenticIntegration, testFrameworkExamples };

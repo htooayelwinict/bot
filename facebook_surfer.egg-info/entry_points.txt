@@ -1,0 +1,2 @@
+[console_scripts]
+facebook-surfer = src.main:cli
