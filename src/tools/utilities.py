@@ -3,6 +3,7 @@
 Ported from src/mcp-tools/tools/utilities.ts
 """
 
+import asyncio
 import json
 import re
 import time
@@ -64,17 +65,31 @@ def ensure_request_tracking(page: Page) -> None:
 
     def on_request_finished(request: Any) -> None:
         try:
-            response = _call_if_callable(request.response)
-            headers = _call_if_callable(response.headers) if response else {}
-            size_header = headers.get("content-length") if isinstance(headers, dict) else None
-            size = int(size_header) if size_header and str(size_header).isdigit() else None
+            # Get response - handle both sync method and coroutine
+            resp_method = getattr(request, "response", None)
+            if resp_method and callable(resp_method):
+                resp = resp_method()
+                # If it returns a coroutine, skip detailed response tracking
+                if asyncio.iscoroutine(resp):
+                    response = None
+                else:
+                    response = resp
+            else:
+                response = None
+
+            if response:
+                headers = _call_if_callable(getattr(response, "headers", None)) or {}
+                size_header = headers.get("content-length") if isinstance(headers, dict) else None
+                size = int(size_header) if size_header and str(size_header).isdigit() else None
+            else:
+                size = None
 
             _record_request_entry(
                 page,
                 {
                     "url": _call_if_callable(request.url),
                     "method": _call_if_callable(request.method),
-                    "status": _call_if_callable(response.status) if response else None,
+                    "status": _call_if_callable(getattr(response, "status", None)) if response else None,
                     "resource_type": _call_if_callable(request.resource_type),
                     "size": size,
                     "timestamp": int(time.time() * 1000),
@@ -137,8 +152,17 @@ def ensure_console_tracking(page: Page) -> None:
             serialized_args: list[str] = []
             for handle in args_handles:
                 try:
-                    value = handle.json_value()
-                    serialized_args.append(value if isinstance(value, str) else json.dumps(value))
+                    # Try json_value() method but handle async gracefully
+                    json_val_method = getattr(handle, "json_value", None)
+                    if json_val_method and callable(json_val_method):
+                        result = json_val_method()
+                        # If it returns a coroutine, skip serialization
+                        if asyncio.iscoroutine(result):
+                            serialized_args.append(f"<async_object>")
+                        else:
+                            serialized_args.append(result if isinstance(result, str) else json.dumps(result))
+                    else:
+                        serialized_args.append(str(handle))
                 except Exception:
                     serialized_args.append(str(handle))
             entry["args"] = serialized_args
@@ -380,16 +404,61 @@ async def browser_evaluate(
 
 @async_session_tool
 async def browser_get_snapshot(root: str = "body", page: Page = None) -> str:
-    """Get accessibility snapshot of the current page for element identification.
+    """Get accessibility snapshot with element refs for precise targeting.
 
     Returns a YAML accessibility tree showing all interactable elements with their
-    aria-labels, roles, and text content. Use this to find selectors before clicking.
+    aria-labels, roles, text content, and unique refs. Use refs from this snapshot
+    for unambiguous element targeting in click/type/hover tools.
+
+    REF USAGE:
+    - Each element has a ref like [ref=e42]
+    - Use ref in tools: browser_click(ref="e42")
+    - Refs are page-scoped (refresh after navigation/UI changes)
+
+    Example workflow:
+    1. Call browser_get_snapshot() to get refs
+    2. Find target element's ref (e.g., button "Post" [ref=e42])
+    3. Use browser_click(ref="e42") for precise targeting
+    4. Refresh snapshot after UI changes
     """
+    from src.tools.ref_registry import generate_refs, store_snapshot, should_refresh_snapshot
+    import sys
+
     try:
-        snapshot = await page.locator(root).first.aria_snapshot()
-        # Return full snapshot - agent needs full context to make decisions
-        return f"Page snapshot:\n{snapshot}"
+        snapshot_yaml, snapshot_data = await generate_refs(page, root)
+        store_snapshot(page, snapshot_data)
+
+        print(f"[SNAPSHOT] Generated {len(snapshot_data.refs)} refs, yaml length={len(snapshot_yaml)}", file=sys.stderr)
+
+        # Build ref summary for interactive elements only
+        ref_list = [
+            {"ref": r.ref, "role": r.role, "name": r.name}
+            for r in snapshot_data.refs.values()
+            if r.role and r.role not in ["generic", "text", "document", "section", "article"]
+        ]
+
+        print(f"[SNAPSHOT] Interactive elements: {len(ref_list)}", file=sys.stderr)
+
+        # Check if snapshot should be refreshed
+        age = time.time() - snapshot_data.timestamp
+        refresh_hint = ""
+        if age > 20:
+            refresh_hint = f"\n\n💡 Snapshot is {age:.0f}s old. Refresh after UI changes."
+
+        return ToolResult(
+            success=True,
+            content=f"Page snapshot:{refresh_hint}\n{snapshot_yaml}\n\nInteractive elements: {len(ref_list)}",
+            data={
+                "refs": ref_list,
+                "ref_count": len(ref_list),
+                "root_ref": snapshot_data.root_ref,
+                "snapshot_age_seconds": round(age, 1)
+            }
+        ).to_string()
     except Exception as exc:
+        import traceback
+        print(f"[SNAPSHOT] Exception: {exc}", file=sys.stderr)
+        traceback.print_exc()
         return ToolResult(
             success=False,
             content=f"Failed to get snapshot: {exc}",

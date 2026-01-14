@@ -1,9 +1,15 @@
-"""Facebook automation agent using DeepAgents framework.
+"""Web browsing automation agent using DeepAgents framework.
 
 Integrates with Playwright browser automation tools to provide
-autonomous Facebook interaction capabilities with HITL support.
+autonomous web interaction capabilities with HITL support.
+Skills middleware enables domain-specific guidance (e.g., Facebook automation).
 """
 
+import os
+from pathlib import Path
+
+from deepagents.backends.filesystem import FilesystemBackend
+from deepagents.middleware.skills import SkillsMiddleware
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
 
@@ -11,31 +17,36 @@ from src.tools.registry import ToolRegistry, register_all_tools
 
 
 class FacebookSurferAgent:
-    """Facebook automation agent using DeepAgents framework.
+    """Web browsing automation agent using DeepAgents framework.
 
-    Provides autonomous Facebook interaction with 22 browser tools,
+    Provides autonomous web interaction with browser tools,
     memory persistence, and human-in-the-loop approval for sensitive actions.
+    Skills loaded from filesystem provide domain-specific guidance.
     """
 
     def __init__(
         self,
-        model: str = "gpt-4o-mini",
+        model: str = "openrouter/mistralai/devstral-2512:free",
         enable_memory: bool = True,
         enable_hitl: bool = False,  # Disabled by default until HITL handling is implemented
         temperature: float = 0.0,
+        api_key: str | None = None,
     ):
-        """Initialize the Facebook Surfer agent.
+        """Initialize the web browsing agent.
 
         Args:
-            model: OpenAI model name (e.g., "gpt-4o", "gpt-4o-mini")
+            model: Model identifier (e.g., "openrouter/mistralai/devstral-2512:free")
+                   Format: "openrouter/<model_name>" for OpenRouter models
             enable_memory: Enable in-memory store for context persistence
             enable_hitl: Enable human-in-the-loop for sensitive actions
             temperature: LLM temperature for response randomness
+            api_key: OpenRouter API key (defaults to OPENROUTER_API_KEY env var)
         """
         self.model = model
         self.enable_memory = enable_memory
         self.enable_hitl = enable_hitl
         self.temperature = temperature
+        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
 
         # Register all tools
         self.registry: ToolRegistry = register_all_tools()
@@ -52,53 +63,122 @@ class FacebookSurferAgent:
         self.agent = self._create_agent()
 
     def _build_system_prompt(self) -> str:
-        """Build system prompt for Facebook automation."""
-        return """You are a Facebook automation agent. You MUST complete tasks fully - do not fake or pretend.
+        """Build system prompt for web browsing automation."""
+        return """You are an autonomous web browsing agent. You MUST complete tasks fully - do not fake or pretend.
 
-## CRITICAL: Always verify your actions worked
-- After clicking, ALWAYS take a snapshot to verify the UI changed
-- If you don't see expected changes, try again with different selectors
-- NEVER say "done" until you verify the task completed
+## CRITICAL RULES
+1. NEVER say "done" or "complete" until you VERIFY the final result with a snapshot
+2. Always complete multi-step workflows entirely - selecting an option is NOT the same as confirming it
+3. Use skills provided in context for site-specific workflows and guidance
+4. ALWAYS use `force=True` for clicks on Facebook/complex sites
 
-## Workflow
-1. `browser_get_snapshot` - See what's on screen BEFORE any action
-2. Click using exact selector
-3. `browser_wait(time=1)` - Wait for UI to update
-4. `browser_get_snapshot` - VERIFY the click worked
-5. Repeat until task is actually complete
+## MANDATORY DECISION PROCESS (Before ANY click)
+Before clicking ANYTHING, you MUST:
 
-## Selector Priority (use these formats)
-1. `button=Button Name` - For buttons shown as `button "Name"` in snapshot (BEST for Facebook)
-2. `text=Visible Text` - For visible text on page
-3. `[aria-label="Label"]` - For aria-label attributes
-4. `role=button[name="Name"]` - Alternative for buttons
+**Step 1: Collect and Analyze**
+```
+browser_get_snapshot()
+```
+Then explicitly list:
+- All visible buttons/elements with their refs
+- What each button does (based on its name/role)
+- Which button matches your goal
 
-## Key Rules
-- NEVER use `browser_select_option` - Facebook uses custom dropdowns, not <select>
-- Always `force=True` when clicking modals/dialogs
-- If a click doesn't work, try: `browser_evaluate` with JS: `document.querySelector('button')?.click()`
+**Step 2: Think Through**
+- "I need to click [X] for [reason]"
+- "Button [ref=e42] says '[name]' - this is/isn't what I need"
+- "I will click ref=[eXX] because..."
 
-## Navigate to Profile
-- Use `browser_navigate(url="https://www.facebook.com/me")` to go directly to profile
+**Step 3: Act**
+```
+browser_click(ref="eXX", force=True)  # With your specific ref from analysis
+```
 
-## IMPORTANT: Change Post Privacy on Profile Page
-On your profile, posts show "Edit audience" button directly in the snapshot as:
-  `button "Edit audience"`
+**Example correct reasoning:**
+```
+# I need to change privacy to "Only me"
+# From snapshot I see:
+# - button "Public" [ref=e15] <- This is privacy button (shows current setting)
+# - button "Photo/video" [ref=e16] <- NOT what I need
+# - button "Tag people" [ref=e17] <- NOT what I need
+# I will click ref=e15 because it shows the current privacy setting
+browser_click(ref="e15", force=True)
+```
 
-To change privacy:
-1. Navigate to profile: `browser_navigate(url="https://www.facebook.com/me")`
-2. Take snapshot: `browser_get_snapshot()`
-3. Click: `browser_click(selector='button=Edit audience', force=True)`
-4. Wait: `browser_wait(time=1)` 
-5. Take snapshot to see privacy dialog options
-6. Look for buttons like `button "Only me"` or text like `text=Only me`
-7. Click: `browser_click(selector='button=Only me', force=True)` or `browser_click(selector='text=Only me', force=True)`
-8. Verify privacy changed by taking another snapshot
+## Core Workflow (Observe → Analyze → Act → Verify)
+1. `browser_get_snapshot` - See what's on screen
+2. **Analyze refs** - List elements, match goal to correct ref
+3. Perform action with the correct ref
+4. `browser_wait(time=1)` - Wait for UI to update
+5. `browser_get_snapshot` - VERIFY the action worked
+6. Repeat until task is actually complete
+
+## Selector Priority (use in this order)
+1. `ref="e42"` - Get ref from snapshot FIRST, then use it (MOST RELIABLE)
+2. `button=Button Name` - For buttons with accessible names
+3. `radio=Option Text` - For radio buttons in privacy/dialog menus
+4. `text=Visible Text` - For visible text elements
+5. `[aria-label="Label"]` - For aria-label attributes
+
+## Facebook Post Composer - CRITICAL LAYOUT KNOWLEDGE
+When you open "What's on your mind" composer, the toolbar has multiple buttons:
+- **Privacy/Audience button** - Shows current setting (Public/Friends/Only me)
+- Photo/video, Tag people, Feeling/activity, Check in, GIF, etc.
+
+**To change privacy:**
+1. Get snapshot, list all buttons with refs
+2. Find the button showing CURRENT privacy (Public/Friends) - NOT Photo/Feeling/GIF
+3. Click that privacy button ref
+4. In dialog, use `radio=Only me` or `radio=Friends` or `radio=Public`
+5. Click `button=Done` to confirm (CRITICAL - selection is NOT confirmed until Done is clicked)
+6. Verify: The privacy button should now show your selected setting
+
+**WRONG patterns to avoid:**
+- Don't click Photo, Feeling, GIF, or other toolbar buttons when looking for privacy
+- Don't click the first button you see - analyze ALL buttons first
+- Don't click anything without listing refs and reasoning first
+
+## Interaction Tips
+- Use `force=True` on ALL clicks for sites with overlays
+- For contenteditable fields: `selector="role=textbox"` or `div[contenteditable='true'][role='textbox']`
+- After form submissions, always verify with snapshot before reporting success
+- For multi-step dialogs: select → confirm → submit → verify
+
+## Using Skills
+When context includes a SKILL file, follow its workflows EXACTLY.
+Skills provide tested selectors, complete workflows, and domain-specific guidance.
+
+## Verification
+- Take snapshots after important actions to confirm state changes
+- A task is NOT complete until the expected outcome is visible on screen
+- If still in a dialog/modal, you haven't finished the workflow
 """
 
     def _create_agent(self):
-        """Create the DeepAgent instance."""
+        """Create the DeepAgent instance with skills middleware."""
         from deepagents import create_deep_agent
+        from langchain_openai import ChatOpenAI
+
+        # Configure model
+        model_config = None
+        model_name = self.model
+        temperature = self.temperature
+
+        # Configure OpenRouter if using openrouter model
+        if self.model.startswith("openrouter/"):
+            # Extract actual model name (remove "openrouter/" prefix)
+            model_name = self.model.replace("openrouter/", "")
+            # Create ChatOpenAI with OpenRouter config
+            model_config = ChatOpenAI(
+                model=model_name,
+                temperature=temperature,
+                base_url="https://openrouter.ai/api/v1",
+                api_key=self.api_key,
+                default_headers={
+                    "HTTP-Referer": "https://github.com/facebook-automation-bot",
+                    "X-Title": "Facebook Automation Bot",
+                },
+            )
 
         # Configure HITL interrupts for sensitive actions
         interrupt_on = {}
@@ -109,13 +189,21 @@ To change privacy:
                 "browser_submit_form": {"allowed_decisions": ["approve", "edit", "reject"]},
             }
 
+        # Setup skills middleware - loads domain-specific guidance as context
+        skills_backend = FilesystemBackend(root_dir=str(Path(__file__).parent.parent.parent / "skills"))
+        skills_middleware = SkillsMiddleware(
+            backend=skills_backend,
+            sources=["/facebook-automation/"],  # Add more skill paths as needed
+        )
+
         return create_deep_agent(
-            model=self.model,
+            model=model_config if model_config else model_name,
             tools=self.tools,
             store=self.store,
             checkpointer=self.checkpointer,
             system_prompt=self.system_prompt,
             interrupt_on=interrupt_on,
+            middleware=[skills_middleware],
         )
 
     async def invoke(self, task: str, thread_id: str = "default") -> dict:
@@ -150,6 +238,26 @@ To change privacy:
             {"messages": [{"role": "user", "content": task}]},
             config=config,
             stream_mode="values",
+        ):
+            yield event
+
+    async def stream_events(self, task: str, thread_id: str = "default"):
+        """Stream detailed agent events for debugging.
+
+        Uses astream_events to show node execution, tool calls, and LLM activity.
+
+        Args:
+            task: Natural language task description
+            thread_id: Conversation thread ID for memory
+
+        Yields:
+            Event dicts with event type, name, and data
+        """
+        config = {"configurable": {"thread_id": thread_id}}
+        async for event in self.agent.astream_events(
+            {"messages": [{"role": "user", "content": task}]},
+            config=config,
+            version="v2",
         ):
             yield event
 

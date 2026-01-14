@@ -1,11 +1,23 @@
-# Dependencies
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
-# TypeScript
-*.tsbuildinfo
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
 
 # Playwright
 /test-results/
@@ -55,14 +67,12 @@ pids/
 *.seed
 *.pid.lock
 
-# Coverage directory used by tools like istanbul
+# Coverage
 coverage/
-.nyc_output/
-
-# Build outputs
-dist/
-build/
-out/
+htmlcov/
+.pytest_cache/
 
 # Docker
 .dockerignore
+
+.claude/

@@ -32,18 +32,11 @@ def set_current_page(page: Page) -> None:
 
 
 def get_current_page() -> Page | None:
-    """Get the current page for tool execution (thread-safe).
+    """Get the current page for tool execution.
 
-    First checks the ContextVar, then falls back to global session.
+    Uses global session directly (ContextVars don't propagate across LangGraph tasks).
     """
-    try:
-        return _current_page.get()
-    except LookupError:
-        # Fall back to global session
-        page = get_global_session_page()
-        if page:
-            return page
-        return None
+    return get_global_session_page()
 
 
 def set_current_context(context: BrowserContext) -> None:
@@ -69,17 +62,14 @@ def set_current_async_page(page: AsyncPage) -> None:
 def get_current_async_page() -> AsyncPage | None:
     """Get the current async page for tool execution.
 
-    First checks the ContextVar, then falls back to global session.
+    Uses global session directly (ContextVars don't propagate across LangGraph tasks).
     """
-    try:
-        return _current_async_page.get()
-    except LookupError:
-        # Fall back to global session
-        from src.session import get_current_async_page as get_global_async_page
-        page = get_global_async_page()
-        if page:
-            return page
-        return None
+    from src.session import get_current_async_page as get_global_async_page
+    page = get_global_async_page()
+    if page is None:
+        import sys
+        print("[WARN] get_current_async_page: No page in global session", file=sys.stderr)
+    return page
 
 
 def set_current_async_context(context: AsyncBrowserContext) -> None:
@@ -162,10 +152,7 @@ def session_tool(func: Callable) -> Callable:
         # Check if page is already provided in kwargs (for testing)
         if "page" not in kwargs:
             page = get_current_page()
-            import sys
-            print(f"[DEBUG {func.__name__}] get_current_page() returned: {page}", file=sys.stderr)
             if not page:
-                print(f"[DEBUG {func.__name__}] No page available!", file=sys.stderr)
                 return ToolResult(
                     success=False,
                     content="Error: No active browser session. Please restore or start a session first.",
@@ -184,8 +171,7 @@ def session_tool(func: Callable) -> Callable:
             return str(result)
         except Exception as e:
             import traceback
-            print(f"[DEBUG {func.__name__}] Exception: {e}", file=sys.stderr)
-            print(traceback.format_exc(), file=sys.stderr)
+            traceback.print_exc()
             return ToolResult(
                 success=False,
                 content=f"Error executing {func.__name__}: {str(e)}",
@@ -204,13 +190,14 @@ def async_session_tool(func: Callable) -> Callable:
 
     @wraps(func)
     async def wrapper(*args: Any, **kwargs: Any) -> str:
+        import sys
+        print(f"[TOOL] {func.__name__} called with args={args}, kwargs keys={list(kwargs.keys())}", file=sys.stderr)
+
         # Check if page is already provided in kwargs (for testing)
         if "page" not in kwargs:
             page = get_current_async_page()
-            import sys
-            print(f"[DEBUG {func.__name__}] get_current_async_page() returned: {page}", file=sys.stderr)
+            print(f"[TOOL] {func.__name__} got page: {page is not None}", file=sys.stderr)
             if not page:
-                print(f"[DEBUG {func.__name__}] No async page available!", file=sys.stderr)
                 return ToolResult(
                     success=False,
                     content="Error: No active browser session. Please restore or start a session first.",
@@ -219,6 +206,7 @@ def async_session_tool(func: Callable) -> Callable:
 
         try:
             result = await func(*args, **kwargs)
+            print(f"[TOOL] {func.__name__} completed successfully", file=sys.stderr)
             # If result is already a string, return it
             if isinstance(result, str):
                 return result
@@ -229,6 +217,7 @@ def async_session_tool(func: Callable) -> Callable:
             return str(result)
         except Exception as e:
             import traceback
+            print(f"[TOOL] {func.__name__} failed: {e}", file=sys.stderr)
             traceback.print_exc()
             return ToolResult(
                 success=False,

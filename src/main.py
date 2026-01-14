@@ -228,40 +228,147 @@ async def async_init_session(login: bool = False, profile: str = "./profiles/fac
         yield session
 
 
-async def run_single_task_async(agent: FacebookSurferAgent, task: str, stream: bool, thread_id: str):
+async def run_single_task_async(agent: FacebookSurferAgent, task: str, stream: bool, debug: bool, thread_id: str):
     """Run a single task and exit (async version).
 
     Args:
         agent: FacebookSurferAgent instance
         task: Task description
         stream: Whether to stream execution
+        debug: Whether to enable detailed debug output
         thread_id: Conversation thread ID
     """
     click.echo(f"\nExecuting task: {task}")
     click.echo("-" * 60)
 
-    if stream:
+    if debug:
+        # Enhanced debugging with astream_events
+        click.secho("\n🔍 DEBUG MODE - Showing all agent events", fg="blue", bold=True)
+        click.echo("-" * 60)
+
+        async for event in agent.stream_events(task, thread_id=thread_id):
+            event_type = event.get("event", "")
+            event_name = event.get("name", "")
+            event_data = event.get("data", {})
+
+            # Node execution
+            if event_type == "on_chain_start":
+                node_name = event_name.replace("_start_", "").replace("_start", "")
+                click.secho(f"\n▶️  Node: {node_name}", fg="blue", bold=True)
+
+            elif event_type == "on_chain_end":
+                node_name = event_name.replace("_end_", "").replace("_end", "")
+                click.secho(f"✅ Node complete: {node_name}", fg="green", dim=True)
+
+            # Tool execution
+            elif event_type == "on_tool_start":
+                tool_name = event_name
+                tool_input = event_data.get("input", {})
+                click.secho(f"\n🔧 Tool: {tool_name}", fg="cyan", bold=True)
+                # Pretty print tool args
+                if isinstance(tool_input, dict):
+                    for k, v in tool_input.items():
+                        value_str = str(v)[:150] + "..." if len(str(v)) > 150 else str(v)
+                        click.echo(f"   {k}: {value_str}")
+
+            elif event_type == "on_tool_end":
+                tool_name = event_name
+                tool_output = event_data.get("output", "")
+                status = "✅" if tool_output else "⚠️"
+                click.secho(f"{status} Tool result: {tool_name}", fg="yellow")
+                # Show snapshot data specially
+                if tool_name == "browser_get_snapshot" and tool_output:
+                    # Parse snapshot for display
+                    lines = str(tool_output).split("\n")[:20]  # Show first 20 lines
+                    click.echo("📸 Snapshot (first 20 lines):")
+                    for line in lines:
+                        click.echo(f"   {line}")
+                    if len(str(tool_output).split("\n")) > 20:
+                        click.echo("   ... (truncated)")
+                elif len(str(tool_output)) > 300:
+                    click.echo(str(tool_output)[:300] + "\n... (truncated)")
+                else:
+                    click.echo(str(tool_output))
+
+            # Agent actions (reasoning)
+            elif event_type == "on_agent_action":
+                action = event_data.get("action", {})
+                tool = action.get("tool", "")
+                tool_input = action.get("tool_input", {})
+                click.secho(f"\n🤖 Agent Action: {tool}", fg="magenta", bold=True)
+                if isinstance(tool_input, dict):
+                    for k, v in tool_input.items():
+                        value_str = str(v)[:100] + "..." if len(str(v)) > 100 else str(v)
+                        click.echo(f"   {k}: {value_str}")
+
+            # LLM calls
+            elif event_type == "on_chat_model_start":
+                click.secho(f"\n🧠 LLM: {event_name}", fg="blue", dim=True)
+
+            elif event_type == "on_chat_model_end":
+                # Show what the LLM produced
+                output = event_data.get("output", {})
+                if hasattr(output, "content"):
+                    content = output.content
+                    if isinstance(content, str) and content.strip():
+                        click.secho(f"🧠 LLM Response:", fg="blue", dim=True)
+                        click.echo(f"   {content[:200]}...")
+
+    elif stream:
+        # Standard stream mode (existing behavior)
+        last_msg_count = 0
         async for event in agent.stream(task, thread_id=thread_id):
-            # Parse and display events
+            # Show all messages since last event
             if "messages" in event and event["messages"]:
-                latest_msg = event["messages"][-1]
-                if hasattr(latest_msg, "content"):
-                    content = latest_msg.content
-                    if isinstance(content, str):
-                        click.echo(f"[Update] {content}")
-                    elif isinstance(content, list):
-                        for part in content:
-                            if isinstance(part, str):
-                                click.echo(f"[Update] {part}")
-                            elif isinstance(part, dict):
-                                # Extract text from content blocks
-                                text = part.get("text", str(part))
-                                click.echo(f"[Update] {text}")
+                messages = event["messages"]
+                # Only show new messages
+                new_messages = messages[last_msg_count:]
+                last_msg_count = len(messages)
+
+                for msg in new_messages:
+                    msg_type = type(msg).__name__
+
+                    # Tool calls from AI
+                    if hasattr(msg, "tool_calls") and msg.tool_calls:
+                        for tc in msg.tool_calls:
+                            tool_name = tc.get("name", "unknown")
+                            tool_args = tc.get("args", {})
+                            click.secho(f"\n🔧 Tool Call: {tool_name}", fg="cyan", bold=True)
+                            # Show args in a readable format
+                            for k, v in tool_args.items():
+                                value_str = str(v)[:100] + "..." if len(str(v)) > 100 else str(v)
+                                click.echo(f"   {k}: {value_str}")
+
+                    # Tool results
+                    if msg_type == "ToolMessage":
+                        tool_name = getattr(msg, "name", "tool")
+                        content = msg.content if hasattr(msg, "content") else str(msg)
+                        # Truncate long results
+                        if len(content) > 500:
+                            content = content[:500] + "\n... (truncated)"
+                        status = "✅" if "success" in content.lower() or "true" in content[:50].lower() else "⚠️"
+                        click.secho(f"\n{status} Tool Result ({tool_name}):", fg="yellow")
+                        click.echo(content)
+
+                    # AI response text
+                    if hasattr(msg, "content") and msg.content and msg_type == "AIMessage":
+                        content = msg.content
+                        # Skip if only tool calls (no text response)
+                        if isinstance(content, str) and content.strip():
+                            click.secho(f"\n🤖 Agent:", fg="green", bold=True)
+                            click.echo(content)
+                        elif isinstance(content, list):
+                            text_parts = [p.get("text", "") if isinstance(p, dict) else str(p) for p in content]
+                            text = "\n".join(p for p in text_parts if p.strip())
+                            if text:
+                                click.secho(f"\n🤖 Agent:", fg="green", bold=True)
+                                click.echo(text)
+
             if "__interrupt__" in event:
-                click.echo(f"[Interrupt] {event['__interrupt__']}")
-                # Handle HITL here if needed
+                click.secho(f"\n⏸️  Interrupt: {event['__interrupt__']}", fg="red", bold=True)
                 click.echo("Human intervention required. Check agent state.")
     else:
+        # Non-stream mode
         result = await agent.invoke(task, thread_id=thread_id)
         click.echo("\nResult:")
         if "messages" in result and result["messages"]:
@@ -373,10 +480,11 @@ def login(profile: str):
 @cli.command()
 @click.argument("task", required=False)
 @click.option("--stream", is_flag=True, help="Stream execution in real-time")
+@click.option("--debug", is_flag=True, help="Enable detailed debug output (shows all events, nodes, tool calls)")
 @click.option("--thread", default="default", help="Conversation thread ID")
-@click.option("--model", default="gpt-4o-mini", help="OpenAI model to use")
+@click.option("--model", default="openrouter/mistralai/devstral-2512:free", help="Model to use (format: openrouter/<model_name>)")
 @click.option("--no-banner", is_flag=True, help="Skip banner display")
-def run(task: str | None, stream: bool, thread: str, model: str, no_banner: bool):
+def run(task: str | None, stream: bool, debug: bool, thread: str, model: str, no_banner: bool):
     """Run a task with the Facebook Surfer agent.
 
     If no task is provided, enters interactive mode.
@@ -395,7 +503,7 @@ def run(task: str | None, stream: bool, thread: str, model: str, no_banner: bool
 
             # Execute task or run interactively
             if task:
-                await run_single_task_async(agent, task, stream, thread)
+                await run_single_task_async(agent, task, stream, debug, thread)
             else:
                 await run_interactive_async(agent, thread)
 

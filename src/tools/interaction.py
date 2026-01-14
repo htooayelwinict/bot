@@ -3,10 +3,10 @@
 Ported from src/mcp-tools/tools/interaction.ts
 """
 
-from typing import Literal
+from typing import Literal, Optional
 
 from playwright.async_api import Page
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from src.tools.base import ToolResult, async_session_tool
 
@@ -16,7 +16,14 @@ from src.tools.base import ToolResult, async_session_tool
 class ClickArgs(BaseModel):
     """Arguments for browser_click tool."""
 
-    selector: str = Field(description="CSS selector, XPath, or text content to find the element")
+    ref: Optional[str] = Field(
+        default=None,
+        description="Exact element reference from page snapshot (preferred over selector)"
+    )
+    selector: Optional[str] = Field(
+        default=None,
+        description="CSS selector, XPath, or text content (fallback if ref not provided)"
+    )
     button: Literal["left", "right", "middle"] = Field(
         default="left",
         description="Mouse button to click",
@@ -40,11 +47,24 @@ class ClickArgs(BaseModel):
         description="Maximum time to wait for element in milliseconds",
     )
 
+    @model_validator(mode="after")
+    def require_selector_or_ref(self):
+        if not self.selector and not self.ref:
+            raise ValueError("Either 'selector' or 'ref' must be provided")
+        return self
+
 
 class TypeArgs(BaseModel):
     """Arguments for browser_type tool."""
 
-    selector: str = Field(description="CSS selector or XPath to find the input element")
+    ref: Optional[str] = Field(
+        default=None,
+        description="Exact element reference from page snapshot (preferred over selector)"
+    )
+    selector: Optional[str] = Field(
+        default=None,
+        description="CSS selector or XPath to find the input element (fallback if ref not provided)"
+    )
     text: str = Field(description="Text to type into the element")
     clear: bool = Field(default=True, description="Whether to clear the field before typing")
     submit: bool = Field(default=False, description="Whether to submit the form after typing")
@@ -61,11 +81,24 @@ class TypeArgs(BaseModel):
         description="Maximum time to wait for element in milliseconds",
     )
 
+    @model_validator(mode="after")
+    def require_selector_or_ref(self):
+        if not self.selector and not self.ref:
+            raise ValueError("Either 'selector' or 'ref' must be provided")
+        return self
+
 
 class SelectOptionArgs(BaseModel):
     """Arguments for browser_select_option tool."""
 
-    selector: str = Field(description="CSS selector to find the select element")
+    ref: Optional[str] = Field(
+        default=None,
+        description="Exact element reference from page snapshot (preferred over selector)"
+    )
+    selector: Optional[str] = Field(
+        default=None,
+        description="CSS selector to find the select element (fallback if ref not provided)"
+    )
     values: list[str] = Field(description="Array of option values or text to select")
     timeout: int = Field(
         default=5000,
@@ -74,17 +107,36 @@ class SelectOptionArgs(BaseModel):
         description="Maximum time to wait for element in milliseconds",
     )
 
+    @model_validator(mode="after")
+    def require_selector_or_ref(self):
+        if not self.selector and not self.ref:
+            raise ValueError("Either 'selector' or 'ref' must be provided")
+        return self
+
 
 class HoverArgs(BaseModel):
     """Arguments for browser_hover tool."""
 
-    selector: str = Field(description="CSS selector or XPath to find the element")
+    ref: Optional[str] = Field(
+        default=None,
+        description="Exact element reference from page snapshot (preferred over selector)"
+    )
+    selector: Optional[str] = Field(
+        default=None,
+        description="CSS selector or XPath to find the element (fallback if ref not provided)"
+    )
     timeout: int = Field(
         default=5000,
         ge=0,
         le=60000,
         description="Maximum time to wait for element in milliseconds",
     )
+
+    @model_validator(mode="after")
+    def require_selector_or_ref(self):
+        if not self.selector and not self.ref:
+            raise ValueError("Either 'selector' or 'ref' must be provided")
+        return self
 
 
 class PressKeyArgs(BaseModel):
@@ -108,7 +160,7 @@ class PressKeyArgs(BaseModel):
 
 def _get_locator(page: Page, selector: str):
     """Get a Playwright locator using smart selector detection.
-    
+
     Supports multiple selector strategies:
     - CSS selectors (default)
     - XPath (starts with // or xpath=)
@@ -117,6 +169,70 @@ def _get_locator(page: Page, selector: str):
     - aria-label (starts with aria-label= or label=)
     - get_by_text for quoted strings
     - button= for button by name (accessibility name)
+    - nth index: selector[nth=N] (0-indexed, e.g., div[nth=5])
+    - hasText filter: selector:hasText("pattern") or selector:hasText(/regex/)
+    - Combined: selector:hasText("pattern")[nth=N]
+
+    Examples:
+        div[nth=5]              -> 6th div element (0-indexed)
+        div:hasText("Only me")   -> div containing "Only me"
+        div:hasText(/^Only$/)    -> div matching regex
+        div:hasText("Only me")[nth=5] -> 6th div containing "Only me"
+    """
+    selector = selector.strip()
+
+    # Parse nth index and hasText filters before other processing
+    nth_index = None
+    has_text_pattern = None
+
+    # Extract [nth=N] suffix
+    import re
+    nth_match = re.search(r'\[nth=(\d+)\]$', selector)
+    if nth_match:
+        nth_index = int(nth_match.group(1))
+        selector = selector[:nth_match.start()].strip()
+
+    # Extract :hasText(...) prefix/suffix
+    has_text_match = re.search(r':hasText\(([^)]+)\)', selector)
+    if has_text_match:
+        has_text_pattern = has_text_match.group(1)
+        selector = selector[:has_text_match.start()].strip()
+
+    # Build base locator using existing logic
+    locator = _get_base_locator(page, selector)
+
+    # Apply hasText filter if present
+    if has_text_pattern:
+        # Check if it's a regex pattern (starts with /)
+        if has_text_pattern.startswith('/'):
+            # Extract regex from /pattern/ or /pattern/flags
+            regex_parts = has_text_pattern[1:].rsplit('/', 1)
+            if len(regex_parts) == 2:
+                regex_pattern = regex_parts[0]
+                # flags could be added here if needed
+                locator = locator.filter(has_text=regex_pattern)
+            else:
+                locator = locator.filter(has_text=has_text_pattern[1:-1] if len(has_text_pattern) > 2 else has_text_pattern)
+        else:
+            # Remove quotes if present
+            text = has_text_pattern.strip('"\'')
+            locator = locator.filter(has_text=text)
+
+    # Apply nth index if present, otherwise use .first for backward compatibility
+    if nth_index is not None:
+        locator = locator.nth(nth_index)
+    elif has_text_pattern is None:
+        # Only add .first if no nth/hasText modifiers (preserves existing behavior)
+        locator = locator.first
+
+    return locator
+
+
+def _get_base_locator(page: Page, selector: str):
+    """Get base locator without nth/hasText filters.
+
+    This is called by _get_locator after extracting nth and hasText modifiers.
+    See _get_locator for full selector syntax documentation.
     """
     selector = selector.strip()
     
@@ -132,6 +248,27 @@ def _get_locator(page: Page, selector: str):
             name = name[1:-1]
         return page.get_by_role("button", name=name).first
     
+    # Radio button by label selector (for privacy dialogs, forms)
+    if selector.startswith("radio="):
+        label = selector.replace("radio=", "", 1).strip()
+        if (label.startswith('"') and label.endswith('"')) or (label.startswith("'") and label.endswith("'")):
+            label = label[1:-1]
+        return page.get_by_role("radio", name=label).first
+    
+    # Checkbox by label selector
+    if selector.startswith("checkbox="):
+        label = selector.replace("checkbox=", "", 1).strip()
+        if (label.startswith('"') and label.endswith('"')) or (label.startswith("'") and label.endswith("'")):
+            label = label[1:-1]
+        return page.get_by_role("checkbox", name=label).first
+    
+    # Link by text selector
+    if selector.startswith("link="):
+        text = selector.replace("link=", "", 1).strip()
+        if (text.startswith('"') and text.endswith('"')) or (text.startswith("'") and text.endswith("'")):
+            text = text[1:-1]
+        return page.get_by_role("link", name=text).first
+    
     # Text-based selector - try multiple strategies
     if selector.startswith("text=") or selector.startswith("text:"):
         text = selector.replace("text=", "", 1).replace("text:", "", 1).strip()
@@ -145,15 +282,22 @@ def _get_locator(page: Page, selector: str):
         # Return an or-locator that tries both
         return page.locator(f"text={text}").or_(page.get_by_role("button", name=text)).first
     
-    # Role-based selector (e.g., role=button[name="Submit"])
+    # Role-based selector (e.g., role=button[name="Submit"] or role=button[name="Post"][exact])
     if selector.startswith("role="):
         role_part = selector.replace("role=", "", 1)
         # Parse role and optional name: role=button[name="Submit"]
+        # Check for exact modifier: role=button[name="Post"][exact]
+        exact_match = "[exact]" in role_part
+        if exact_match:
+            role_part = role_part.replace("[exact]", "")
+
         if "[name=" in role_part:
             role = role_part.split("[")[0]
             name_match = role_part.split('name="')[1].split('"')[0] if 'name="' in role_part else role_part.split("name='")[1].split("'")[0]
-            return page.get_by_role(role, name=name_match).first
-        return page.get_by_role(role_part).first
+            locator = page.get_by_role(role, name=name_match, exact=exact_match)
+        else:
+            locator = page.get_by_role(role_part, exact=exact_match)
+        return locator.first
 
     # Explicit textbox role helper (common for contenteditable fields)
     if selector == "textbox" or selector.startswith("role=textbox"):
@@ -181,13 +325,14 @@ def _get_locator(page: Page, selector: str):
             # Try to find element by text
             return page.get_by_text(text, exact=False).first
     
-    # Default: CSS selector
-    return page.locator(selector).first
+    # Default: CSS selector (return without .first to allow nth/hasText processing)
+    return page.locator(selector)
 
 
 @async_session_tool
 async def browser_click(
-    selector: str,
+    ref: str | None = None,
+    selector: str | None = None,
     button: str = "left",
     modifiers: list[str] = None,
     double_click: bool = False,
@@ -195,29 +340,99 @@ async def browser_click(
     timeout: int = 5000,
     page: Page = None,
 ) -> str:
-    """Click on a web page element using various selector strategies.
+    """Click on a web page element using ref or selector.
 
-    Selector formats supported:
+    PREFERRED: Use ref from browser_get_snapshot for precise targeting.
+    FALLBACK: Use selector if ref not available.
+
+    REF USAGE (recommended for disambiguation):
+    1. Call browser_get_snapshot() to get element refs
+    2. Find target ref (e.g., button "Post" [ref=e42])
+    3. Call browser_click(ref="e42") for exact targeting
+
+    SELECTOR USAGE (fallback):
+    - button=Name: Clicks button with that accessible name (RECOMMENDED for buttons)
+    - text=Text: Clicks element containing that text
+    - radio=Text: Clicks radio button with that label
     - CSS selector: "button.submit", "#id", "[aria-label='Close']"
     - XPath: "//button[@type='submit']" or "xpath=//div"
-    - Text content: 'text=Click me' or '"Click me"' (quoted)
-    - Role-based: 'role=button[name="Submit"]'
-    - aria-label: 'aria-label=Close' or 'label=Close'
+    - nth index: "selector[nth=N]" (0-indexed)
+    - hasText filter: "selector:hasText('text')" or "selector:hasText(/regex/)"
 
     Args:
-        selector: Selector to find the element (see formats above)
+        ref: Element reference from snapshot (e.g., "e42") - preferred
+        selector: CSS/text/role selector - fallback
         button: Mouse button to click (left, right, middle)
         modifiers: Modifier keys to hold during click (Alt, Control, Meta, Shift)
         double_click: Whether to perform a double click
-        force: Bypass actionability checks (use when elements intercept clicks)
+        force: Bypass actionability checks (use for modals/dialogs - RECOMMENDED)
         timeout: Maximum time to wait for element in milliseconds
         page: Playwright Page object (injected by decorator)
 
     Returns:
         Success message confirming the click action
     """
+    from src.tools.ref_registry import resolve_ref, get_snapshot
+
     if modifiers is None:
         modifiers = []
+
+    # Try ref resolution first (preferred path)
+    if ref:
+        try:
+            element = await resolve_ref(page, ref)
+
+            # Get element info for response
+            snapshot_data = get_snapshot(page)
+            element_info = {}
+            if snapshot_data and ref in snapshot_data.refs:
+                element_ref = snapshot_data.refs[ref]
+                element_info = {
+                    "ref": ref,
+                    "role": element_ref.role,
+                    "name": element_ref.name
+                }
+
+            click_options = {
+                "button": button,
+                "modifiers": modifiers,
+                "force": force or True,  # Auto-force for refs (reliable)
+                "timeout": timeout,
+            }
+
+            if double_click:
+                await element.dblclick(**click_options)
+            else:
+                await element.click(**click_options)
+
+            content = f"Clicked {element_info.get('role', 'element')}"
+            if element_info.get('name'):
+                content += f" '{element_info['name']}'"
+            content += f" [ref={ref}]"
+
+            return ToolResult(
+                success=True,
+                content=content,
+                data={"ref": ref, "button": button, "double_click": double_click, "element": element_info},
+            ).to_string()
+
+        except ValueError as e:
+            # If selector provided, fall through to selector-based click
+            if selector:
+                pass  # Continue to selector fallback
+            else:
+                return ToolResult(
+                    success=False,
+                    content=f"Ref resolution failed: {e}",
+                    data={"ref": ref},
+                ).to_string()
+
+    # Selector-based click (fallback)
+    if not selector:
+        return ToolResult(
+            success=False,
+            content="Either 'ref' or 'selector' must be provided",
+        ).to_string()
 
     try:
         element = _get_locator(page, selector)
@@ -263,23 +478,97 @@ async def browser_click(
 
 @async_session_tool
 async def browser_type(
-    selector: str,
-    text: str,
+    ref: str | None = None,
+    selector: str | None = None,
+    text: str = "",
     clear: bool = True,
     submit: bool = False,
     delay: int = 0,
     timeout: int = 5000,
     page: Page = None,
 ) -> str:
-    """Type text into an input field or editable element.
-    
-    Selector formats supported:
-    - CSS selector: "input#email", "[name='password']"
+    """Type text into an input field or editable element (including contenteditable).
+
+    PREFERRED: Use ref from browser_get_snapshot for precise targeting.
+    FALLBACK: Use selector if ref not available.
+
+    REF USAGE (recommended for disambiguation):
+    1. Call browser_get_snapshot() to get element refs
+    2. Find target ref (e.g., textbox "Email" [ref=e23])
+    3. Call browser_type(ref="e23", text="...") for exact targeting
+
+    SELECTOR USAGE (fallback):
+    - CSS selector: "input#email", "[name='password']", "div[role='textbox'] p"
     - XPath: "//input[@type='text']"
-    - Text content: 'text=Search' or '"Search"' (quoted)
-    - Role-based: 'role=textbox[name="Email"]'
+    - Role-based: 'role=textbox' (for contenteditable fields)
     - aria-label: 'aria-label=Search' or 'label=Search'
+
+    NOTE: For rich text editors (Facebook, etc.), if typing fails, the tool
+    automatically falls back to JavaScript to set the text and dispatch events.
     """
+    from src.tools.ref_registry import resolve_ref, get_snapshot
+
+    # Try ref resolution first (preferred path)
+    if ref:
+        try:
+            element = await resolve_ref(page, ref)
+
+            # Get element info for response
+            snapshot_data = get_snapshot(page)
+            element_info = {}
+            if snapshot_data and ref in snapshot_data.refs:
+                element_ref = snapshot_data.refs[ref]
+                element_info = {
+                    "ref": ref,
+                    "role": element_ref.role,
+                    "name": element_ref.name
+                }
+
+            # Focus and type
+            await element.click(timeout=timeout)
+
+            if clear:
+                await element.fill("")
+
+            if delay > 0:
+                await element.press_sequentially(text, delay=delay)
+            else:
+                await element.fill(text)
+
+            if submit:
+                await element.press("Enter")
+
+            content = f'Typed "{text}" into {element_info.get("role", "element")}'
+            if element_info.get("name"):
+                content += f" '{element_info['name']}'"
+            content += f" [ref={ref}]"
+            if submit:
+                content += " and submitted"
+
+            return ToolResult(
+                success=True,
+                content=content,
+                data={"ref": ref, "text": text, "clear": clear, "submit": submit, "element": element_info},
+            ).to_string()
+
+        except ValueError as e:
+            # If selector provided, fall through to selector-based typing
+            if selector:
+                pass  # Continue to selector fallback
+            else:
+                return ToolResult(
+                    success=False,
+                    content=f"Ref resolution failed: {e}",
+                    data={"ref": ref},
+                ).to_string()
+
+    # Selector-based typing (fallback)
+    if not selector:
+        return ToolResult(
+            success=False,
+            content="Either 'ref' or 'selector' must be provided",
+        ).to_string()
+
     try:
         element = _get_locator(page, selector)
         await element.wait_for(state="visible", timeout=timeout)
@@ -359,12 +648,69 @@ async def browser_type(
 
 @async_session_tool
 async def browser_select_option(
-    selector: str,
-    values: list[str],
+    ref: str | None = None,
+    selector: str | None = None,
+    values: list[str] | None = None,
     timeout: int = 5000,
     page: Page = None,
 ) -> str:
-    """Select one or more options from a dropdown select element."""
+    """Select one or more options from a dropdown select element.
+
+    PREFERRED: Use ref from browser_get_snapshot for precise targeting.
+    FALLBACK: Use selector if ref not available.
+    """
+    from src.tools.ref_registry import resolve_ref, get_snapshot
+
+    if values is None:
+        values = []
+
+    # Try ref resolution first (preferred path)
+    if ref:
+        try:
+            element = await resolve_ref(page, ref)
+
+            # Get element info for response
+            snapshot_data = get_snapshot(page)
+            element_info = {}
+            if snapshot_data and ref in snapshot_data.refs:
+                element_ref = snapshot_data.refs[ref]
+                element_info = {
+                    "ref": ref,
+                    "role": element_ref.role,
+                    "name": element_ref.name
+                }
+
+            await element.select_option(values)
+
+            content = f"Selected {len(values)} option(s) from {element_info.get('role', 'element')}"
+            if element_info.get("name"):
+                content += f" '{element_info['name']}'"
+            content += f" [ref={ref}]: {', '.join(values)}"
+
+            return ToolResult(
+                success=True,
+                content=content,
+                data={"ref": ref, "values": values, "element": element_info},
+            ).to_string()
+
+        except ValueError as e:
+            # If selector provided, fall through to selector-based selection
+            if selector:
+                pass  # Continue to selector fallback
+            else:
+                return ToolResult(
+                    success=False,
+                    content=f"Ref resolution failed: {e}",
+                    data={"ref": ref},
+                ).to_string()
+
+    # Selector-based selection (fallback)
+    if not selector:
+        return ToolResult(
+            success=False,
+            content="Either 'ref' or 'selector' must be provided",
+        ).to_string()
+
     try:
         element = _get_locator(page, selector)
         await element.wait_for(state="visible", timeout=timeout)
@@ -384,8 +730,66 @@ async def browser_select_option(
 
 
 @async_session_tool
-async def browser_hover(selector: str, timeout: int = 5000, page: Page = None) -> str:
-    """Hover the mouse over an element."""
+async def browser_hover(
+    ref: str | None = None,
+    selector: str | None = None,
+    timeout: int = 5000,
+    page: Page = None,
+) -> str:
+    """Hover the mouse over an element.
+
+    PREFERRED: Use ref from browser_get_snapshot for precise targeting.
+    FALLBACK: Use selector if ref not available.
+    """
+    from src.tools.ref_registry import resolve_ref, get_snapshot
+
+    # Try ref resolution first (preferred path)
+    if ref:
+        try:
+            element = await resolve_ref(page, ref)
+
+            # Get element info for response
+            snapshot_data = get_snapshot(page)
+            element_info = {}
+            if snapshot_data and ref in snapshot_data.refs:
+                element_ref = snapshot_data.refs[ref]
+                element_info = {
+                    "ref": ref,
+                    "role": element_ref.role,
+                    "name": element_ref.name
+                }
+
+            await element.hover()
+
+            content = f"Hovered over {element_info.get('role', 'element')}"
+            if element_info.get("name"):
+                content += f" '{element_info['name']}'"
+            content += f" [ref={ref}]"
+
+            return ToolResult(
+                success=True,
+                content=content,
+                data={"ref": ref, "element": element_info},
+            ).to_string()
+
+        except ValueError as e:
+            # If selector provided, fall through to selector-based hover
+            if selector:
+                pass  # Continue to selector fallback
+            else:
+                return ToolResult(
+                    success=False,
+                    content=f"Ref resolution failed: {e}",
+                    data={"ref": ref},
+                ).to_string()
+
+    # Selector-based hover (fallback)
+    if not selector:
+        return ToolResult(
+            success=False,
+            content="Either 'ref' or 'selector' must be provided",
+        ).to_string()
+
     try:
         element = _get_locator(page, selector)
         await element.wait_for(state="visible", timeout=timeout)

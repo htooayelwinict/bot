@@ -6,94 +6,70 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | Command | Purpose |
 |--------|---------|
-| `npm install` | Install dependencies |
-| `npx playwright install chromium` | Install browser |
+| `pip install -e .` | Install base dependencies |
+| `pip install -e ".[agent]"` | Install with DeepAgents/LangChain |
+| `pip install -e ".[dev]"` | Install dev tools (pytest, ruff, mypy) |
+| `.venv/bin/python -m playwright install chromium` | Install browser |
 | `cp config/.env.example config/.env` | Configure environment |
-| `npm run login` | Create/restore Facebook session |
-| `npm run build` | Compile TypeScript |
-| `npm run test:mcp` | Test MCP tools |
-| `npm run demo:ai` | Demo AI agent |
-| `npm test` | Run Playwright tests |
-| `npm run test:ui` | Run tests with Playwright UI |
-| `npm run lint` | ESLint check |
-| `npm run lint:fix` | Fix ESLint issues automatically |
-| `docker-compose up --build` | Build and run containers |
-| `docker-compose down` | Stop and remove containers |
+| `.venv/bin/python src/main.py` | Run Facebook agent |
+| `.venv/bin/python src/demo_tools.py` | Demo browser tools |
+| `pytest tests/` | Run tests |
+| `pytest tests/ -v` | Run tests with verbose output |
+| `pytest tests/test_file.py` | Run single test file |
+| `ruff check src/` | Lint code |
+| `ruff check src/ --fix` | Fix lint issues |
+| `mypy src/` | Type check |
 
 ## Architecture Overview
 
-Containerized Playwright bot automation with Facebook session management and MCP tools for AI agents.
+Python-based Facebook automation agent using Playwright with session management and MCP tools.
+
+**Phased Development** (per [pyproject.toml](pyproject.toml)):
+- Phase 1: Base tools + session management (current)
+- Phase 2: DeepAgents/LangChain integration (`pip install -e ".[agent]"`)
+- Phase 4: ChromaDB long-term memory (`pip install -e ".[memory]"`)
 
 ### Core Components
 
-**Human-in-the-Loop Login** (`src/automation/human-in-loop-login.ts`)
-- Facebook authentication with persistent Chrome profiles stored in `./profiles/`
+**Session Manager** (`src/session/manager.py`)
+- Facebook authentication with persistent browser contexts stored in `./profiles/`
 - Anti-bot detection with stealth browser arguments and human-like interaction
-- 3-minute manual login fallback with automatic session persistence
-- Session validation using `[aria-label*="Account"]` selector
-- Automatic cleanup of Chrome lock files (`SingletonLock`, `SingletonSocket`)
+- Session validation and persistence
+- Automatic cleanup of lock files
 
-**MCP Tools** (`src/mcp-tools/`)
-- 22 standardized browser automation tools across 5 categories
-- JSON Schema validation with OpenAI function calling compatibility
-- Extensible registry pattern with lazy tool instantiation
-- Direct Playwright execution without network overhead
-- Base tool class with built-in error handling and validation
+**Browser Tools** (`src/tools/`)
+- Standardized browser automation tools
+- Pydantic models for validation
+- Registry pattern for tool discovery
+- Direct Playwright execution
 
-**Docker Containerization** (`Dockerfile`, `docker-compose.yml`)
-- Alpine Linux base with Playwright system dependencies
-- Multi-bot support with isolated profiles per container
-- Volume mounting for persistent profile storage
-- Non-root user execution for security
-- Health checks and graceful shutdown support
-
-**Integration Layer** (`src/automation/mcp-playwright-tools.ts`)
-- Backward-compatible wrapper maintaining existing API
-- Session-aware execution using restored browser contexts
-- Automatic initialization of MCP tools with existing sessions
+**Agent** (`src/agents/`)
+- FacebookSurfer agent for autonomous navigation
+- Tool orchestration and result handling
+- State management and error recovery
 
 ### Development Workflow
 
-1. **Session Setup**: Run `npm run login` if `./profiles/bot-facebook` doesn't exist
-2. **Tool Development**: Inherit from `BaseMCPTool`, define JSON Schema, register with `mcpRegistry`
-3. **Testing**: Use `npm run test:mcp` to validate tools with Facebook profile
-4. **AI Integration**: Use `MCPToolsManager` for orchestration with standardized results
-
-### TypeScript Configuration
-
-- **Target**: ES2020 with CommonJS modules
-- **Output**: `./dist/` with declaration and source maps
-- **Strict**: Enabled with consistent type checking
-- **Playwright**: Type definitions installed via `@playwright/test`
+1. **Setup**: Run `pip install -e .` and `playwright install chromium`
+2. **Session**: Run `python src/main.py` to create/restore Facebook session
+3. **Testing**: Use `pytest tests/` to validate functionality
+4. **Tool Development**: Extend tools in `src/tools/` with proper type hints
 
 ### Testing Strategy
 
-- **Unit Tests**: Use `npm run test:mcp` for MCP tools validation
-- **E2E Tests**: Playwright test runner with UI mode (`npm run test:ui`)
+- **Unit Tests**: `pytest tests/` for tools and session management
+- **Integration Tests**: `pytest tests/integration/` for end-to-end workflows
 - **Demo Scripts**:
-  - `src/test-mcp-architecture.ts` - Comprehensive MCP tools testing
-  - `src/demo-ai-agent.ts` - AI agent orchestration example
-
-### MCP Tool Categories
-
-- **Navigation** (4): navigate, back, screenshot, page info
-- **Interaction** (5): click, type, select, hover, press key
-- **Utilities** (5): wait, evaluate, snapshot, network, console
-- **Forms** (3): fill, get data, submit
-- **Browser** (5): tabs, resize, dialogs, reload, close
+  - `src/demo_tools.py` - Browser tools demonstration
+  - `src/main.py` - Full agent CLI
 
 ### Runtime Behavior
 
 **Session Management**:
-- Chrome profiles persisted in `./profiles/bot-facebook/`
+- Browser contexts persisted in `./profiles/facebook/`
 - Automatic lock file cleanup on startup
 - Account validation using DOM selectors
-- Browser context isolation per bot instance
+- Context isolation per agent instance
 
-**Tool Execution Pipeline**:
-JSON Schema validation → context injection → Playwright execution → result serialization → error handling
-
-**Container Deployment**:
-- Each container runs isolated bot with dedicated profile
-- Profile volumes mounted for persistence across restarts
-- Environment-specific configuration via `.env` files
+**Tool Execution**:
+Input validation (Pydantic) → Playwright execution → result serialization → error handling
