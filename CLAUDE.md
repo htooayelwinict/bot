@@ -11,8 +11,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `pip install -e ".[dev]"` | Install dev tools (pytest, ruff, mypy) |
 | `.venv/bin/python -m playwright install chromium` | Install browser |
 | `cp config/.env.example config/.env` | Configure environment |
-| `.venv/bin/python src/main.py` | Run Facebook agent |
-| `.venv/bin/python src/demo_tools.py` | Demo browser tools |
+| `.venv/bin/python -m facebook-surfer login` | Create Facebook session |
+| `.venv/bin/python -m facebook-surfer run "task"` | Run single task |
+| `.venv/bin/python -m facebook-surfer run` | Interactive mode |
+| `.venv/bin/python -m facebook-surfer run --stream` | Stream mode with real-time output |
+| `.venv/bin/python -m facebook-surfer run --debug` | Debug mode with detailed events |
 | `pytest tests/` | Run tests |
 | `pytest tests/ -v` | Run tests with verbose output |
 | `pytest tests/test_file.py` | Run single test file |
@@ -22,7 +25,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Architecture Overview
 
-Python-based Facebook automation agent using Playwright with session management and MCP tools.
+Python-based Facebook automation agent using DeepAgents + LangChain + LangGraph with Playwright browser automation.
 
 **Phased Development** (per [pyproject.toml](pyproject.toml)):
 - Phase 1: Base tools + session management (current)
@@ -31,45 +34,46 @@ Python-based Facebook automation agent using Playwright with session management 
 
 ### Core Components
 
-**Session Manager** (`src/session/manager.py`)
-- Facebook authentication with persistent browser contexts stored in `./profiles/`
-- Anti-bot detection with stealth browser arguments and human-like interaction
-- Session validation and persistence
-- Automatic cleanup of lock files
+**Session Manager** ([`src/session/__init__.py`](src/session/__init__.py))
+- Facebook authentication with persistent browser contexts in `./profiles/`
+- Anti-bot detection with stealth browser args and 3-min human-in-the-loop login
+- Session validation via DOM selectors (`LOGGED_IN_SELECTORS`, `LOGIN_SELECTORS`)
+- Automatic `SingletonLock` cleanup for persistent contexts
+- Both sync and async APIs supported
 
-**Browser Tools** (`src/tools/`)
-- Standardized browser automation tools
-- Pydantic models for validation
-- Registry pattern for tool discovery
-- Direct Playwright execution
+**Browser Tools** ([`src/tools/`](src/tools/))
+- Standardized tools with Pydantic validation
+- Registry pattern ([`registry.py`](src/tools/registry.py)) for auto-discovery
+- Base tool class ([`base.py`](src/tools/base.py)) with global session/page context
+- Categories: navigation, interaction, forms, vision, utilities
 
-**Agent** (`src/agents/`)
-- FacebookSurfer agent for autonomous navigation
-- Tool orchestration and result handling
-- State management and error recovery
+**Agent** ([`src/agents/facebook_surfer.py`](src/agents/facebook_surfer.py))
+- `FacebookSurferAgent` using DeepAgents framework
+- LangGraph for orchestration with `MemorySaver` checkpointer
+- Skills middleware loads domain guidance from `skills/facebook-automation/`
+- System prompt enforces "Observe → Analyze → Act → Verify" workflow
+- Supports OpenRouter models via `openrouter/<model_name>` format
 
-### Development Workflow
+### CLI Commands ([`src/main.py`](src/main.py))
 
-1. **Setup**: Run `pip install -e .` and `playwright install chromium`
-2. **Session**: Run `python src/main.py` to create/restore Facebook session
-3. **Testing**: Use `pytest tests/` to validate functionality
-4. **Tool Development**: Extend tools in `src/tools/` with proper type hints
+- `login` - Start 3-minute manual login flow
+- `run [--stream] [--debug] [--thread ID] [--model MODEL] [task]` - Execute task or enter interactive mode
+  - `--stream`: Real-time tool call visualization
+  - `--debug`: Full event streaming (nodes, tools, LLM calls)
+  - `--model`: Default `openrouter/mistralai/devstral-2512:free`
 
-### Testing Strategy
+### Critical Workflow Patterns
 
-- **Unit Tests**: `pytest tests/` for tools and session management
-- **Integration Tests**: `pytest tests/integration/` for end-to-end workflows
-- **Demo Scripts**:
-  - `src/demo_tools.py` - Browser tools demonstration
-  - `src/main.py` - Full agent CLI
+**Facebook Post Composer:**
+1. Get snapshot, list ALL buttons with refs
+2. Privacy button shows current state (Public/Friends) - NOT Photo/Feeling/GIF
+3. Click privacy button ref → select option → Click Done → verify
 
-### Runtime Behavior
+**Selector Priority:**
+1. `ref="e42"` from snapshot (most reliable)
+2. `button=Name` for accessible names
+3. `radio=Option` for radio buttons
+4. `text=Text` for visible text
+5. `[aria-label="X"]` for aria labels
 
-**Session Management**:
-- Browser contexts persisted in `./profiles/facebook/`
-- Automatic lock file cleanup on startup
-- Account validation using DOM selectors
-- Context isolation per agent instance
-
-**Tool Execution**:
-Input validation (Pydantic) → Playwright execution → result serialization → error handling
+Always use `force=True` for clicks on Facebook/complex sites with overlays.

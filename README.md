@@ -1,47 +1,64 @@
-# Playwright Bot Automation
+# Facebook Surfer - AI Automation Agent
 
-Containerized bot automation using Playwright with persistent user profiles.
-
-## Overview
-
-This project enables running automated bots with isolated browser profiles that maintain login sessions and state across container restarts.
-
-## Features
-
-- **Containerized Playwright** - Isolated browser automation in Docker
-- **Persistent Profiles** - User profiles mounted as volumes for session persistence
-- **Multi-Bot Support** - Run multiple isolated bots simultaneously
-- **TypeScript** - Type-safe automation scripts
-- **Page Objects** - Maintainable automation patterns
+Facebook automation agent using DeepAgents + LangChain + Playwright with persistent session management.
 
 ## Quick Start
 
-1. Install dependencies:
 ```bash
-npm install
+# Install dependencies
+pip install -e ".[agent,dev]"
+
+# Install Playwright browser
+.venv/bin/python -m playwright install chromium
+
+# Configure environment
+cp config/.env.example config/.env
+# Edit config/.env with OPENROUTER_API_KEY
+
+# Create Facebook session (first time only)
+.venv/bin/python -m facebook-surfer login
+
+# Run a task
+.venv/bin/python -m facebook-surfer run "Post hello world to Facebook"
+
+# Interactive mode
+.venv/bin/python -m facebook-surfer run
 ```
 
-2. Install Playwright browsers:
-```bash
-npx playwright install
-```
+## Documentation
 
-3. Build and run with Docker:
-```bash
-docker-compose up --build
-```
+| Doc | Description |
+|-----|-------------|
+| [CLAUDE.md](CLAUDE.md) | Development commands and architecture |
+| [docs/codebase-summary.md](docs/codebase-summary.md) | File structure and key files |
+| [docs/code-standards.md](docs/code-standards.md) | Python conventions and patterns |
+| [docs/system-architecture.md](docs/system-architecture.md) | Design and data flow |
+
+## Tech Stack
+
+- **Backend:** Python 3.11+, Playwright
+- **Agent Framework:** DeepAgents, LangChain, LangGraph
+- **Testing:** Pytest, pytest-asyncio
+- **Linting:** Ruff, mypy
+
+## Commands
+
+| Command | Purpose |
+|---------|---------|
+| `pip install -e ".[agent]"` | Install with agent dependencies |
+| `python -m facebook-surfer login` | Create Facebook session |
+| `python -m facebook-surfer run "task"` | Run single task |
+| `python -m facebook-surfer run --stream` | Stream mode |
+| `python -m facebook-surfer run --debug` | Debug mode |
+| `pytest tests/` | Run tests |
 
 ## Project Structure
 
-- `src/` - TypeScript source code
-- `profiles/` - Persistent user profile data
-- `config/` - Configuration files
-- `infra/` - Docker and deployment configurations
-- `docs/` - Documentation
-
-## Configuration
-
-Copy `config/.env.example` to `config/.env` and configure your bot settings.
+- `src/session/` - Facebook session management with HITL login
+- `src/tools/` - Browser automation tools with registry pattern
+- `src/agents/` - DeepAgents integration with skills middleware
+- `skills/` - Domain-specific guidance for workflows
+- `profiles/` - Persistent browser contexts (gitignored)
 
 ## License
 
