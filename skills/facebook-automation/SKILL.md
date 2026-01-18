@@ -331,6 +331,7 @@ browser_get_snapshot()  # Verify comment appears
 3. **Wait after actions** - 1-2 seconds for React re-renders
 4. **Verify before "done"** - Take final snapshot to confirm result
 5. **Follow dialog sequences** - select → confirm → submit → verify
+6. **Scroll down/up to load more posts** - if you want more posts beyond what's in the snapshot, you should scroll down/up the webpage
 
 ---
 

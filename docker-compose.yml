@@ -6,32 +6,36 @@ services:
     container_name: playwright-bot-1
     volumes:
       - ./profiles/bot1:/app/profiles/bot1
-      - ./config:/app/config:ro
+      - ./config/.env:/app/.env:ro
     environment:
-      - BOT_NAME=bot1
-      - PROFILE_PATH=/app/profiles/bot1
+      - FACEBOOK_PROFILE_PATH=/app/profiles/bot1
+      - HEADLESS=true
       - NODE_ENV=production
     env_file:
       - config/.env
     restart: unless-stopped
     networks:
       - bot-network
+    cap_add:
+      - SYS_ADMIN
 
   bot2:
     build: .
     container_name: playwright-bot-2
     volumes:
       - ./profiles/bot2:/app/profiles/bot2
-      - ./config:/app/config:ro
+      - ./config/.env:/app/.env:ro
     environment:
-      - BOT_NAME=bot2
-      - PROFILE_PATH=/app/profiles/bot2
+      - FACEBOOK_PROFILE_PATH=/app/profiles/bot2
+      - HEADLESS=true
       - NODE_ENV=production
     env_file:
       - config/.env
     restart: unless-stopped
     networks:
       - bot-network
+    cap_add:
+      - SYS_ADMIN
 
 networks:
   bot-network:

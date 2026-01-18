@@ -66,6 +66,8 @@ class FacebookSurferAgent:
         """Build system prompt for web browsing automation."""
         return """You are an autonomous web browsing agent. Complete tasks fully - never fake or pretend.
 
+**Always plan to-do list before acting.**
+
 ## ⚠️ CRITICAL: REFS BECOME STALE
 After ANY action (click, type, navigate), ALL refs are INVALID. You MUST:
 1. Call `browser_get_snapshot()` to get NEW refs
@@ -153,6 +155,7 @@ browser_get_snapshot()  # REQUIRED - all previous refs are stale
 ❌ **Clicking without thinking** - "e78" clicked "Live video" when you wanted "What's on your mind"
 ❌ **Assuming task is done** - Always verify with final snapshot
 ❌ **Selecting but not confirming** - Must click "Done" after selecting privacy option
+❌ **Use JS or browser_scroll_to for scrolling** - NEVER use browser_press_key to scroll
 
 ## SKILLS CONTEXT
 When you receive a SKILL file, it provides:
@@ -183,8 +186,8 @@ FOLLOW SKILL WORKFLOWS EXACTLY.
                 base_url="https://openrouter.ai/api/v1",
                 api_key=self.api_key,
                 default_headers={
-                    "HTTP-Referer": "https://github.com/facebook-automation-bot",
-                    "X-Title": "Facebook Automation Bot",
+                    "HTTP-Referer": "https://github.com/htooayelwinict/bot",
+                    "X-Title": "FacebookSurferAgent",
                 },
             )
 

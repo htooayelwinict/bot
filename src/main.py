@@ -279,14 +279,14 @@ async def run_single_task_async(agent: FacebookSurferAgent, task: str, stream: b
                 # Show snapshot data specially
                 if tool_name == "browser_get_snapshot" and tool_output:
                     # Parse snapshot for display
-                    lines = str(tool_output).split("\n")[:20]  # Show first 20 lines
-                    click.echo("📸 Snapshot (first 20 lines):")
+                    lines = str(tool_output).split("\n")[:50]  # Show first 50 lines
+                    click.echo("📸 Snapshot (first 50 lines):")
                     for line in lines:
                         click.echo(f"   {line}")
-                    if len(str(tool_output).split("\n")) > 20:
+                    if len(str(tool_output).split("\n")) > 50:
                         click.echo("   ... (truncated)")
-                elif len(str(tool_output)) > 300:
-                    click.echo(str(tool_output)[:300] + "\n... (truncated)")
+                elif len(str(tool_output)) > 600:
+                    click.echo(str(tool_output)[:600] + "\n... (truncated)")
                 else:
                     click.echo(str(tool_output))
 

@@ -1,51 +1,55 @@
-FROM node:20-alpine
+FROM python:3.11-slim
 
-# Install Playwright system dependencies
-RUN apk add --no-cache \
-    chromium \
-    nss \
-    freetype \
-    freetype-dev \
-    harfbuzz \
+# Install system deps for Playwright
+RUN apt-get update && apt-get install -y \
+    wget \
+    gnupg \
     ca-certificates \
-    ttf-freefont \
-    && rm -rf /var/cache/apk/*
+    fonts-liberation \
+    libasound2 \
+    libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libatspi2.0-0 \
+    libcups2 \
+    libdbus-1-3 \
+    libdrm2 \
+    libgbm1 \
+    libgtk-3-0 \
+    libnss3 \
+    libwayland-client0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxkbcommon0 \
+    libxrandr2 \
+    xdg-utils \
+    && rm -rf /var/lib/apt/lists/*
 
-# Set up user for security
-RUN addgroup -g 1001 -S playwright && \
-    adduser -S playwright -u 1001
-
-# Set working directory
+# Set working dir
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
-COPY tsconfig.json ./
+# Copy project files
+COPY pyproject.toml ./
+COPY src/ ./src/
+COPY README.md ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install Python deps
+RUN pip install --no-cache-dir -e ".[agent]"
 
 # Install Playwright browsers
-RUN npx playwright install chromium --with-deps
+RUN playwright install chromium
+RUN playwright install-deps chromium
 
-# Copy source code
-COPY src/ ./src/
+# Create profiles dir with correct perms
+RUN mkdir -p /app/profiles && \
+    useradd -m -u 1001 appuser && \
+    chown -R appuser:appuser /app
 
-# Build the application
-RUN npm run build
+USER appuser
 
-# Create profiles directory
-RUN mkdir -p /app/profiles && chown -R playwright:playwright /app/profiles
-
-# Switch to non-root user
-USER playwright
-
-# Expose port for debugging
 EXPOSE 9222
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD node -e "console.log('OK')"
+    CMD python -c "import playwright; print('OK')"
 
-# Run the application
-CMD ["npm", "start"]
+CMD ["python", "-m", "facebook-surfer", "run"]
