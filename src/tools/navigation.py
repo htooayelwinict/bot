@@ -13,6 +13,7 @@ from playwright.async_api import Page
 from pydantic import BaseModel, Field
 
 from src.tools.base import ToolResult, async_session_tool
+from src.tools.security import wrap_untrusted, has_injection_markers
 
 # ============= Tool Argument Schemas =============
 
@@ -194,8 +195,19 @@ async def browser_get_page_info(page: Page = None) -> str:
     })"""
     )
 
+    # Title comes from page content - check for injection
+    page_title = info.get("title", "")
+    suspicious = has_injection_markers(page_title)
+    
+    if suspicious:
+        info["_security_warning"] = "Suspicious patterns in page title"
+
+    # Wrap output with security boundary
+    content_json = json.dumps(info, indent=2)
+    wrapped_content = wrap_untrusted(content_json, "PAGE_INFO")
+
     return ToolResult(
         success=True,
-        content=json.dumps(info, indent=2),
-        data=info,
+        content=f"Page info (⚠️ external data):\n{wrapped_content}",
+        data={**info, "suspicious_content": suspicious},
     ).to_string()
