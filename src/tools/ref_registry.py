@@ -9,10 +9,9 @@ import os
 import time
 import weakref
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
-from playwright.async_api import Page, Locator
-
+from playwright.async_api import Locator, Page
 
 # ============= Configuration =============
 
@@ -133,7 +132,6 @@ def _build_snapshot_yaml(node: dict, refs: dict[str, ElementRef], indent: int = 
         indent: Current indentation level
         ref_lookup: Optional pre-built index for O(1) ref lookup
     """
-    prefix = "  " * indent
     lines = []
 
     role = node.get("role", "")
@@ -172,8 +170,8 @@ async def generate_refs(page: Page, root: str = "body") -> tuple[str, SnapshotDa
     Returns:
         (human_readable_snapshot, structured_data)
     """
-    import sys
     import re
+    import sys
     start_time = time.time()
     log_ref_op("generate_refs_start", {"root": root})
 
@@ -206,7 +204,7 @@ async def generate_refs(page: Page, root: str = "body") -> tuple[str, SnapshotDa
     ref_counter = 0
     lines = aria_text.split('\n')
     ref_lines = []
-    
+
     # Stack to track hierarchy: [(indent_level, ref)]
     # We use -1 indent for virtual root
     stack = [(-1, "root")]
@@ -227,9 +225,9 @@ async def generate_refs(page: Page, root: str = "body") -> tuple[str, SnapshotDa
             # Manage stack to find parent
             while len(stack) > 1 and stack[-1][0] >= indent:
                 stack.pop()
-            
+
             parent_ref = stack[-1][1]
-            
+
             # Calculate sibling index
             # Key distinguishes unique element types within the same parent
             sibling_key = (parent_ref, role, name)
@@ -238,7 +236,7 @@ async def generate_refs(page: Page, root: str = "body") -> tuple[str, SnapshotDa
 
             ref = f"e{ref_counter}"
             ref_counter += 1
-            
+
             # Push self to stack for potential children
             stack.append((indent, ref))
 
@@ -370,7 +368,7 @@ async def resolve_ref(page: Page, ref: str) -> Locator:
     snapshot_data = get_snapshot(page)
     if not snapshot_data:
         raise ValueError(
-            f"No snapshot data available. Call browser_get_snapshot first."
+            "No snapshot data available. Call browser_get_snapshot first."
         )
 
     element_ref = snapshot_data.refs.get(ref)

@@ -10,6 +10,18 @@ from pydantic import BaseModel, Field, model_validator
 
 from src.tools.base import ToolResult, async_session_tool
 
+# ============= Helper Functions =============
+
+
+def _strip_quotes(value: str) -> str:
+    """Remove surrounding quotes from a value if present."""
+    if not value:
+        return value
+    if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+        return value[1:-1]
+    return value
+
+
 # ============= Tool Argument Schemas =============
 
 
@@ -235,53 +247,38 @@ def _get_base_locator(page: Page, selector: str):
     See _get_locator for full selector syntax documentation.
     """
     selector = selector.strip()
-    
+
     # XPath selector
     if selector.startswith("//") or selector.startswith("xpath="):
         xpath = selector.replace("xpath=", "", 1) if selector.startswith("xpath=") else selector
         return page.locator(f"xpath={xpath}").first
-    
+
     # Button by name selector (matches button accessibility name)
     if selector.startswith("button="):
-        name = selector.replace("button=", "", 1).strip()
-        if (name.startswith('"') and name.endswith('"')) or (name.startswith("'") and name.endswith("'")):
-            name = name[1:-1]
+        name = _strip_quotes(selector.replace("button=", "", 1).strip())
         return page.get_by_role("button", name=name).first
-    
+
     # Radio button by label selector (for privacy dialogs, forms)
     if selector.startswith("radio="):
-        label = selector.replace("radio=", "", 1).strip()
-        if (label.startswith('"') and label.endswith('"')) or (label.startswith("'") and label.endswith("'")):
-            label = label[1:-1]
+        label = _strip_quotes(selector.replace("radio=", "", 1).strip())
         return page.get_by_role("radio", name=label).first
-    
+
     # Checkbox by label selector
     if selector.startswith("checkbox="):
-        label = selector.replace("checkbox=", "", 1).strip()
-        if (label.startswith('"') and label.endswith('"')) or (label.startswith("'") and label.endswith("'")):
-            label = label[1:-1]
+        label = _strip_quotes(selector.replace("checkbox=", "", 1).strip())
         return page.get_by_role("checkbox", name=label).first
-    
+
     # Link by text selector
     if selector.startswith("link="):
-        text = selector.replace("link=", "", 1).strip()
-        if (text.startswith('"') and text.endswith('"')) or (text.startswith("'") and text.endswith("'")):
-            text = text[1:-1]
+        text = _strip_quotes(selector.replace("link=", "", 1).strip())
         return page.get_by_role("link", name=text).first
-    
+
     # Text-based selector - try multiple strategies
     if selector.startswith("text=") or selector.startswith("text:"):
-        text = selector.replace("text=", "", 1).replace("text:", "", 1).strip()
-        # Remove quotes if present
-        if (text.startswith('"') and text.endswith('"')) or (text.startswith("'") and text.endswith("'")):
-            text = text[1:-1]
-        # First try get_by_text (for visible text)
-        text_locator = page.get_by_text(text, exact=False).first
-        # Also create button locator as fallback (for button accessibility names)
-        button_locator = page.get_by_role("button", name=text).first
-        # Return an or-locator that tries both
+        text = _strip_quotes(selector.replace("text=", "", 1).replace("text:", "", 1).strip())
+        # Return an or-locator that tries both text and button accessibility names
         return page.locator(f"text={text}").or_(page.get_by_role("button", name=text)).first
-    
+
     # Role-based selector (e.g., role=button[name="Submit"] or role=button[name="Post"][exact])
     if selector.startswith("role="):
         role_part = selector.replace("role=", "", 1)
@@ -302,19 +299,17 @@ def _get_base_locator(page: Page, selector: str):
     # Explicit textbox role helper (common for contenteditable fields)
     if selector == "textbox" or selector.startswith("role=textbox"):
         return page.get_by_role("textbox").first
-    
+
     # aria-label selector
     if selector.startswith("aria-label=") or selector.startswith("label="):
-        label = selector.replace("aria-label=", "", 1).replace("label=", "", 1).strip()
-        if (label.startswith('"') and label.endswith('"')) or (label.startswith("'") and label.endswith("'")):
-            label = label[1:-1]
+        label = _strip_quotes(selector.replace("aria-label=", "", 1).replace("label=", "", 1).strip())
         return page.get_by_label(label).first
-    
+
     # Quoted string = text search
     if (selector.startswith('"') and selector.endswith('"')) or (selector.startswith("'") and selector.endswith("'")):
-        text = selector[1:-1]
+        text = _strip_quotes(selector)
         return page.get_by_text(text, exact=False).first
-    
+
     # Check for invalid jQuery-style selectors and convert
     if ":contains(" in selector:
         # Extract text from :contains('text') or :contains("text")
@@ -324,7 +319,7 @@ def _get_base_locator(page: Page, selector: str):
             text = match.group(1)
             # Try to find element by text
             return page.get_by_text(text, exact=False).first
-    
+
     # Default: CSS selector (return without .first to allow nth/hasText processing)
     return page.locator(selector)
 
@@ -372,7 +367,7 @@ async def browser_click(
     Returns:
         Success message confirming the click action
     """
-    from src.tools.ref_registry import resolve_ref, get_snapshot
+    from src.tools.ref_registry import get_snapshot, resolve_ref
 
     if modifiers is None:
         modifiers = []
@@ -436,7 +431,7 @@ async def browser_click(
 
     try:
         element = _get_locator(page, selector)
-        
+
         # Wait for element, but if force=True, don't require visibility
         if not force:
             await element.wait_for(state="visible", timeout=timeout)
@@ -468,7 +463,7 @@ async def browser_click(
             suggestion = " Element not visible. Try a different selector or check if element exists."
         elif "SyntaxError" in error_msg or "not a valid selector" in error_msg:
             suggestion = " Invalid selector syntax. Use text='...' for text search or check CSS selector."
-        
+
         return ToolResult(
             success=False,
             content=f"Click failed on '{selector}': {error_msg}{suggestion}",
@@ -506,7 +501,7 @@ async def browser_type(
     NOTE: For rich text editors (Facebook, etc.), if typing fails, the tool
     automatically falls back to JavaScript to set the text and dispatch events.
     """
-    from src.tools.ref_registry import resolve_ref, get_snapshot
+    from src.tools.ref_registry import get_snapshot, resolve_ref
 
     # Try ref resolution first (preferred path)
     if ref:
@@ -659,7 +654,7 @@ async def browser_select_option(
     PREFERRED: Use ref from browser_get_snapshot for precise targeting.
     FALLBACK: Use selector if ref not available.
     """
-    from src.tools.ref_registry import resolve_ref, get_snapshot
+    from src.tools.ref_registry import get_snapshot, resolve_ref
 
     if values is None:
         values = []
@@ -741,7 +736,7 @@ async def browser_hover(
     PREFERRED: Use ref from browser_get_snapshot for precise targeting.
     FALLBACK: Use selector if ref not available.
     """
-    from src.tools.ref_registry import resolve_ref, get_snapshot
+    from src.tools.ref_registry import get_snapshot, resolve_ref
 
     # Try ref resolution first (preferred path)
     if ref:
