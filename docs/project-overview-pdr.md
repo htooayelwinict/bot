@@ -31,6 +31,7 @@ Facebook Surfer is an AI-powered automation agent that uses DeepAgents + LangCha
 | Browser tools registry | Done | High |
 | DeepAgents integration | Done | High |
 | Skills middleware | Done | Medium |
+| Prompt injection defense | Done | High |
 | "Only me" posting workflow | Done | High |
 | Privacy selector pattern | Done | High |
 | Interactive mode | Done | Medium |

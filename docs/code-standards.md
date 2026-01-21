@@ -92,6 +92,38 @@ class ClickInput(BaseModel):
     force: bool = Field(default=False, description="Bypass checks")
 ```
 
+### Security: Wrap Untrusted Content
+
+Tools that return data from web pages **MUST** wrap content to prevent prompt injection:
+
+```python
+from src.tools.security import wrap_and_check, wrap_untrusted
+
+def browser_get_page_info(url: str) -> dict:
+    # Get data from browser
+    title = page.title()
+    actual_url = page.url
+
+    # Wrap with security delimiters & check for injection
+    wrapped_title, suspicious = wrap_and_check(title, label="PAGE_TITLE")
+
+    return {
+        "success": True,
+        "data": {
+            "title": wrapped_title,  # Wrapped: <<<PAGE_TITLE_START>>>...<<<PAGE_TITLE_END>>>
+            "url": wrap_untrusted(actual_url, label="PAGE_URL"),
+        }
+    }
+```
+
+**Security functions** ([`src/tools/security.py`](src/tools/security.py)):
+| Function | Purpose |
+|----------|---------|
+| `wrap_untrusted(content, label)` | Wrap content with boundary markers |
+| `wrap_and_check(content, label)` | Wrap + detect injection patterns |
+| `has_injection_markers(content)` | Check for suspicious patterns |
+| `strip_zero_width(content)` | Remove invisible Unicode obfuscation |
+
 ## Testing
 
 - Test files: `tests/test_<module>.py`
