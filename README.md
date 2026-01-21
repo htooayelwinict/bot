@@ -30,6 +30,7 @@ cp config/.env.example config/.env
 | Doc | Description |
 |-----|-------------|
 | [CLAUDE.md](CLAUDE.md) | Development commands and architecture |
+| [docs/project-overview-pdr.md](docs/project-overview-pdr.md) | Project goals, features, and PDR |
 | [docs/codebase-summary.md](docs/codebase-summary.md) | File structure and key files |
 | [docs/code-standards.md](docs/code-standards.md) | Python conventions and patterns |
 | [docs/system-architecture.md](docs/system-architecture.md) | Design and data flow |
@@ -45,17 +46,18 @@ cp config/.env.example config/.env
 
 | Command | Purpose |
 |---------|---------|
-| `pip install -e ".[agent]"` | Install with agent dependencies |
-| `python -m facebook-surfer login` | Create Facebook session |
-| `python -m facebook-surfer run "task"` | Run single task |
-| `python -m facebook-surfer run --stream` | Stream mode |
-| `python -m facebook-surfer run --debug` | Debug mode |
-| `pytest tests/` | Run tests |
+| `.venv/bin/pip install -e ".[agent]"` | Install with agent dependencies |
+| `.venv/bin/python -m facebook-surfer login` | Create Facebook session |
+| `.venv/bin/python -m facebook-surfer run "task"` | Run single task |
+| `.venv/bin/python -m facebook-surfer run --stream` | Stream mode |
+| `.venv/bin/python -m facebook-surfer run --debug` | Debug mode |
+| `.venv/bin/python -m pytest tests/` | Run tests |
 
 ## Project Structure
 
 - `src/session/` - Facebook session management with HITL login
 - `src/tools/` - Browser automation tools with registry pattern
+  - `security.py` - Prompt injection defense for untrusted browser content
 - `src/agents/` - DeepAgents integration with skills middleware
 - `skills/` - Domain-specific guidance for workflows
 - `profiles/` - Persistent browser contexts (gitignored)

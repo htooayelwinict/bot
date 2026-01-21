@@ -2,23 +2,35 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Environment Setup
+
+**CRITICAL:** Always use `.venv` for all Python commands, dependencies, and app runtime.
+
+```bash
+# First-time setup
+python3 -m venv .venv
+.venv/bin/pip install -e ".[agent,dev]"
+.venv/bin/python -m playwright install chromium
+cp config/.env.example config/.env
+# Edit config/.env with OPENROUTER_API_KEY
+```
+
 ## Development Commands
 
 | Command | Purpose |
 |--------|---------|
-| `pip install -e .` | Install base dependencies |
-| `pip install -e ".[agent]"` | Install with DeepAgents/LangChain |
-| `pip install -e ".[dev]"` | Install dev tools (pytest, ruff, mypy) |
+| `.venv/bin/pip install -e .` | Install base dependencies |
+| `.venv/bin/pip install -e ".[agent]"` | Install with DeepAgents/LangChain |
+| `.venv/bin/pip install -e ".[dev]"` | Install dev tools (pytest, ruff, mypy) |
 | `.venv/bin/python -m playwright install chromium` | Install browser |
-| `cp config/.env.example config/.env` | Configure environment |
 | `.venv/bin/python -m facebook-surfer login` | Create Facebook session |
 | `.venv/bin/python -m facebook-surfer run "task"` | Run single task |
 | `.venv/bin/python -m facebook-surfer run` | Interactive mode |
 | `.venv/bin/python -m facebook-surfer run --stream` | Stream mode with real-time output |
 | `.venv/bin/python -m facebook-surfer run --debug` | Debug mode with detailed events |
-| `pytest tests/` | Run tests |
-| `pytest tests/ -v` | Run tests with verbose output |
-| `pytest tests/test_file.py` | Run single test file |
+| `.venv/bin/python -m pytest tests/` | Run tests |
+| `.venv/bin/python -m pytest tests/ -v` | Run tests with verbose output |
+| `.venv/bin/python -m pytest tests/test_file.py` | Run single test file |
 | `ruff check src/` | Lint code |
 | `ruff check src/ --fix` | Fix lint issues |
 | `mypy src/` | Type check |
@@ -64,6 +76,9 @@ Python-based Facebook automation agent using DeepAgents + LangChain + LangGraph 
 
 ### Critical Workflow Patterns
 
+**⚠️ REFS BECOME STALE AFTER EVERY ACTION**
+After ANY click, type, or navigation: ALL refs from previous snapshot are INVALID. You MUST call `browser_get_snapshot()` to get fresh refs before the next action.
+
 **Facebook Post Composer:**
 1. Get snapshot, list ALL buttons with refs
 2. Privacy button shows current state (Public/Friends) - NOT Photo/Feeling/GIF
@@ -77,3 +92,64 @@ Python-based Facebook automation agent using DeepAgents + LangChain + LangGraph 
 5. `[aria-label="X"]` for aria labels
 
 Always use `force=True` for clicks on Facebook/complex sites with overlays.
+
+---
+
+## Tool Development
+
+Tools use the registry pattern in [`src/tools/registry.py`](src/tools/registry.py):
+
+```python
+from src.tools.base import BaseTool
+from src.tools.registry import ToolSpec, ToolCategory, registry
+
+class MyTool(BaseTool):
+    """Description of what this tool does."""
+
+    def _execute(self, **kwargs) -> dict:
+        return {"success": True, "data": ...}
+
+# Register the tool
+registry.register(
+    ToolSpec(
+        name="my_tool",
+        category=ToolCategory.utilities,
+        description="Brief description",
+        func=my_tool_function,
+        args_schema=MyInputSchema,  # Pydantic BaseModel
+    )
+)
+```
+
+All tools automatically get access to global session/page context via `get_current_async_page()`.
+
+---
+
+## Skills System
+
+Domain-specific guidance lives in [`skills/facebook-automation/SKILL.md`](skills/facebook-automation/SKILL.md). The `SkillsMiddleware` (DeepAgents) injects this guidance into agent context at runtime, enabling site-specific workflows without code changes.
+
+Key skill patterns:
+- **Observe → Think → Act → Verify** workflow enforcement
+- **Ref staleness rules** - critical for Facebook's React SPA
+- **Selector priority** - ref → button= → radio= → aria-label
+- **Dialog completion** - select option → confirm → verify
+
+---
+
+## Session Management Patterns
+
+**Context Manager** (preferred):
+```python
+async with async_init_session(login=False) as session:
+    agent = FacebookSurferAgent(model=model)
+    await agent.invoke(task)
+```
+
+**Global Context** (tools use this internally):
+```python
+set_global_session(session)
+page = get_current_async_page()
+```
+
+Both sync and async APIs are supported via `async_init_session()` / `init_session()`.

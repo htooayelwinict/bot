@@ -12,25 +12,27 @@ src/
 ├── tools/
 │   ├── __init__.py
 │   ├── base.py                  # Base tool class with global context
-│   ├── registry.py              # Tool auto-discovery
-│   ├── navigation.py            # URL navigation
-│   ├── interaction.py           # Click, type, form actions
-│   ├── forms.py                 # Form filling
-│   ├── vision.py                # Screenshots and snapshots
-│   ├── utilities.py             # Wait, extract, evaluate
+│   ├── registry.py              # Tool auto-discovery & LangChain StructuredTool
+│   ├── navigation.py            # URL navigation, page info, screenshots
+│   ├── interaction.py           # Click, type, hover, press_key, select_option
+│   ├── forms.py                 # Form filling, get/submit form
+│   ├── vision.py                # Screenshot capture (legacy)
+│   ├── utilities.py             # Snapshot, wait, evaluate, console/network logs
+│   ├── browser.py               # Browser control (tabs, resize, dialog, reload, close)
+│   ├── security.py              # Prompt injection defense (wrap_untrusted, detect)
 │   └── ref_registry.py          # Ref-based tool resolution
 ├── main.py                      # CLI entry point (Click)
 ├── demo_tools.py                # Tool demonstration
 ├── facebook_post_tools.py       # Facebook-specific tools
 └── facebook_post_onlyme.py      # "Only me" posting script
 
-tests/
+tests/                            # 10 test files
 ├── test_facebook_surfer.py      # Agent tests
 └── test_interaction_tools.py    # Tool tests
 
 skills/
 └── facebook-automation/
-    └── SKILL.md                 # Domain-specific guidance
+    └── SKILL.md                 # Domain-specific guidance & workflows
 
 profiles/                        # Persistent browser contexts (gitignored)
 └── facebook/
@@ -44,28 +46,35 @@ config/
 | File | Purpose |
 |------|---------|
 | [`src/session/__init__.py`](src/session/__init__.py) | FacebookSessionManager with HITL login, persistent contexts |
-| [`src/tools/registry.py`](src/tools/registry.py) | Auto-discovers and registers all tools |
+| [`src/tools/registry.py`](src/tools/registry.py) | Auto-discovers & registers tools, converts to LangChain StructuredTool |
 | [`src/tools/base.py`](src/tools/base.py) | BaseTool with global session/page context |
+| [`src/tools/security.py`](src/tools/security.py) | Prompt injection defense (wrap_untrusted, detect, sanitize) |
 | [`src/agents/facebook_surfer.py`](src/agents/facebook_surfer.py) | DeepAgents + LangGraph agent with skills middleware |
 | [`src/main.py`](src/main.py) | Click CLI: login, run, test commands |
 | [`pyproject.toml`](pyproject.toml) | Dependencies, extras (agent, dev, memory) |
 
 ## Tools Registry
 
-All tools in [`src/tools/`](src/tools/) are auto-discovered via decorator pattern:
+All tools in [`src/tools/`](src/tools/) are registered via [`ToolRegistry`](src/tools/registry.py):
 
 ```python
-@register_tool
-class SomeTool(BaseTool):
-    ...
+registry.register(
+    ToolSpec(
+        name="browser_click",
+        category=ToolCategory.interaction,
+        description="Click on an element",
+        func=browser_click,
+        args_schema=ClickArgs,  # Pydantic BaseModel
+    )
+)
 ```
 
-Registered tools:
-- **Navigation**: `browser_navigate`, `browser_go_back`
-- **Interaction**: `browser_click`, `browser_type`, `browser_hover`, `browser_press_key`
-- **Forms**: `browser_fill_form`, `browser_select_option`, `browser_file_upload`
-- **Vision**: `browser_get_snapshot`, `browser_take_screenshot`
-- **Utilities**: `browser_wait`, `browser_evaluate`, `browser_extract_text`
+Registered tools (22 total):
+- **Navigation** (4): `browser_navigate`, `browser_navigate_back`, `browser_screenshot`, `browser_get_page_info`
+- **Interaction** (5): `browser_click`, `browser_type`, `browser_select_option`, `browser_hover`, `browser_press_key`
+- **Forms** (3): `browser_fill_form`, `browser_get_form_data`, `browser_submit_form`
+- **Utilities** (5): `browser_wait`, `browser_evaluate`, `browser_get_snapshot`, `browser_get_network_requests`, `browser_get_console_messages`
+- **Browser** (5): `browser_tabs`, `browser_resize`, `browser_handle_dialog`, `browser_reload`, `browser_close`
 
 ## Session Management
 
