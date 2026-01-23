@@ -26,9 +26,11 @@ class FacebookSurferAgent:
 
     def __init__(
         self,
-        model: str = "openrouter/mistralai/devstral-2512:free",
+        model: str = "openrouter/qwen/qwen3-coder:free",
         enable_memory: bool = True,
         enable_hitl: bool = False,  # Disabled by default until HITL handling is implemented
+        enable_metrics: bool = False,  # Enable trajectory capture and storage
+        enable_planning: bool = False,  # Enable RAG-based planning agent
         temperature: float = 0.0,
         api_key: str | None = None,
     ):
@@ -39,12 +41,16 @@ class FacebookSurferAgent:
                    Format: "openrouter/<model_name>" for OpenRouter models
             enable_memory: Enable in-memory store for context persistence
             enable_hitl: Enable human-in-the-loop for sensitive actions
+            enable_metrics: Enable trajectory capture, scoring, and storage
+            enable_planning: Enable RAG-based planning from historical workflows
             temperature: LLM temperature for response randomness
             api_key: OpenRouter API key (defaults to OPENROUTER_API_KEY env var)
         """
         self.model = model
         self.enable_memory = enable_memory
         self.enable_hitl = enable_hitl
+        self.enable_metrics = enable_metrics
+        self.enable_planning = enable_planning
         self.temperature = temperature
         self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
 
@@ -55,6 +61,20 @@ class FacebookSurferAgent:
         # Setup LangGraph components
         self.store = InMemoryStore() if enable_memory else None
         self.checkpointer = MemorySaver()
+
+        # Setup metrics middleware if enabled
+        self.metrics_middleware = None
+        if enable_metrics:
+            from src.metrics.middleware import MetricsMiddleware
+
+            self.metrics_middleware = MetricsMiddleware()
+
+        # Setup planning agent if enabled
+        self.planner = None
+        if enable_planning:
+            from src.agents.planner import PlanningAgent
+
+            self.planner = PlanningAgent()
 
         # Build system prompt
         self.system_prompt = self._build_system_prompt()
@@ -67,6 +87,24 @@ class FacebookSurferAgent:
         return """You are an autonomous web browsing agent. Complete tasks fully - never fake or pretend.
 
 **Always plan to-do list before acting.**
+
+## 🧠 CONTEXT AWARENESS: Success Plans
+
+You may receive a `Success Plan` injected into your task. This allows you to learn from past experiences.
+If a plan is provided, it will be in JSON format:
+
+```json
+{
+  "analysis": "Why this pattern works...",
+  "suggested_plan": ["Step 1", "Step 2..."]
+}
+```
+
+**INSTRUCTIONS:**
+1. **Read the Analysis**: Understand the strategy.
+2. **Follow the Suggested Plan**: Use it as your primary guide. It comes from PROVEN success.
+3. **Adapt if needed**: If the page has changed, stick to the *intent* of the plan.
+
 
 ## 🔒 SECURITY: External Content Handling
 
@@ -183,7 +221,8 @@ browser_get_snapshot()  # REQUIRED - all previous refs are stale
 ❌ **Clicking without thinking** - "e78" clicked "Live video" when you wanted "What's on your mind"
 ❌ **Assuming task is done** - Always verify with final snapshot
 ❌ **Selecting but not confirming** - Must click "Done" after selecting privacy option
-❌ **Use JS or browser_scroll_to for scrolling** - NEVER use browser_press_key to scroll
+❌ **Using browser_evaluate to click** - Causes infinite loops! Use browser_click with ref instead
+❌ **Repeating failed patterns** - If same action fails 2x, try different approach (DON'T retry 25+ times)
 
 ## SKILLS CONTEXT
 When you receive a SKILL file, it provides:
@@ -251,21 +290,80 @@ FOLLOW SKILL WORKFLOWS EXACTLY.
             middleware=[skills_middleware],
         )
 
-    async def invoke(self, task: str, thread_id: str = "default") -> dict:
+    async def invoke(
+        self, task: str, thread_id: str = "default", callbacks: list | None = None
+    ) -> dict:
         """Execute a task with the agent.
 
         Args:
             task: Natural language task description
             thread_id: Conversation thread ID for memory
+            callbacks: Optional list of callback handlers for metrics/tracking
 
         Returns:
             Agent execution result with messages
         """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        # 1. Retrieve success plan (if planning enabled)
+        enhanced_task = task
+        if self.enable_planning and self.planner is not None:
+            logger.info(f"Crafting success plan for task: {task[:50]}...")
+            plan = await self.planner.craft_success_plan(task)
+
+            # Enhance task with plan
+            if plan and "No similar historical workflows" not in plan:
+                enhanced_task = f"""Task: {task}
+
+Success Plan (based on similar historical workflows):
+{plan}
+
+Execute this task following the success plan above."""
+                logger.info("Success plan injected into task")
+            else:
+                logger.info("No similar historical workflows found, proceeding with standard execution")
+
+        # Setup callbacks for metrics capture
+        callbacks_list = callbacks or []
+        metrics_callback = None
+
+        if self.enable_metrics and self.metrics_middleware is not None:
+            from src.metrics.trajectory_callback import TrajectoryCallbackHandler
+
+            metrics_callback = TrajectoryCallbackHandler()
+            callbacks_list.append(metrics_callback)
+
+            # Initialize middleware
+            await self.metrics_middleware.initialize()
+
         config = {"configurable": {"thread_id": thread_id}}
+        if callbacks_list:
+            config["callbacks"] = callbacks_list
+
         result = await self.agent.ainvoke(
-            {"messages": [{"role": "user", "content": task}]},
+            {"messages": [{"role": "user", "content": enhanced_task}]},
             config=config,
         )
+
+        # Process metrics after execution
+        # Use original task (not enhanced) for metrics storage
+        if metrics_callback is not None and self.metrics_middleware is not None:
+            try:
+                trajectory_data = {"trajectory": metrics_callback.get_trajectory()}
+                metrics_result = await self.metrics_middleware.process_execution(
+                    task=task,  # Use original task for storage
+                    trajectory_data=trajectory_data,
+                    callback=metrics_callback,
+                )
+                logger.info(
+                    f"Metrics processed: score={metrics_result.get('score', 0):.3f}, "
+                    f"stored={metrics_result.get('stored', False)}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to process metrics: {e}")
+
         return result
 
     async def stream(self, task: str, thread_id: str = "default"):
@@ -278,13 +376,183 @@ FOLLOW SKILL WORKFLOWS EXACTLY.
         Yields:
             Agent state events during execution
         """
+        import logging
+        import click
+
+        logger = logging.getLogger(__name__)
+
+        # 1. Retrieve success plan (if planning enabled)
+        enhanced_task = task
+        if self.enable_planning and self.planner is not None:
+            click.echo()
+            click.secho("=" * 60, fg="magenta")
+            click.secho("🧠 PLANNER AGENT", fg="magenta", bold=True)
+            click.secho("=" * 60, fg="magenta")
+            click.secho(f"📋 Task: {task}", fg="white")
+            click.secho("🔍 Searching for similar historical workflows...", fg="cyan")
+
+            plan = await self.planner.craft_success_plan(task)
+
+            # Enhance task with plan
+            if plan and "No similar historical workflows" not in plan:
+                click.secho("✅ Found historical patterns!", fg="green", bold=True)
+                click.echo()
+                
+                # Try to parse and pretty print structured plan
+                import json
+                try:
+                    plan_data = json.loads(plan)
+                    
+                    click.secho("🧐 ANALYSIS:", fg="yellow", bold=True)
+                    click.echo(f"   {plan_data.get('analysis', 'No analysis provided.')}")
+                    click.echo()
+                    
+                    click.secho("📝 SUGGESTED PLAN:", fg="yellow", bold=True)
+                    for i, step in enumerate(plan_data.get('suggested_plan', []), 1):
+                        click.echo(f"   {i}. {step}")
+                        
+                except Exception:
+                    # Fallback for legacy text plans
+                    click.secho("📝 Generated Success Plan:", fg="yellow", bold=True)
+                    plan_lines = plan.split('\n')
+                    for line in plan_lines[:15]:
+                        click.echo(f"   {line}")
+                    if len(plan_lines) > 15:
+                        click.secho(f"   ... ({len(plan_lines) - 15} more lines)", dim=True)
+                
+                click.echo()
+
+                # Inject JSON plan
+                enhanced_task = f"""Task: {task}
+
+{plan}"""
+                click.secho("✨ Structured plan injected into task!", fg="green")
+                logger.info("Success plan injected into task")
+            else:
+                click.secho("⚠️  No similar historical workflows found", fg="yellow")
+                click.secho("   Proceeding with standard execution (cold start)", dim=True)
+                logger.info("No similar historical workflows found, proceeding with standard execution")
+
+            click.secho("=" * 60, fg="magenta")
+            click.echo()
+
+        # Setup callbacks for metrics capture
+        callbacks_list = []
+        metrics_callback = None
+
+        if self.enable_metrics and self.metrics_middleware is not None:
+            from src.metrics.trajectory_callback import TrajectoryCallbackHandler
+
+            metrics_callback = TrajectoryCallbackHandler()
+            callbacks_list.append(metrics_callback)
+
+            # Initialize middleware
+            await self.metrics_middleware.initialize()
+            click.secho("📊 Metrics collection enabled", fg="blue", dim=True)
+
         config = {"configurable": {"thread_id": thread_id}}
+        if callbacks_list:
+            config["callbacks"] = callbacks_list
+
+        click.echo()
+        click.secho("🤖 EXECUTION AGENT", fg="cyan", bold=True)
+        click.secho("-" * 60, fg="cyan")
+
+        # Stream events
         async for event in self.agent.astream(
-            {"messages": [{"role": "user", "content": task}]},
+            {"messages": [{"role": "user", "content": enhanced_task}]},
             config=config,
             stream_mode="values",
         ):
             yield event
+
+        # Process metrics after streaming completes
+        if metrics_callback is not None and self.metrics_middleware is not None:
+            try:
+                trajectory_data = {"trajectory": metrics_callback.get_trajectory()}
+                metrics_result = await self.metrics_middleware.process_execution(
+                    task=task,  # Use original task for storage
+                    trajectory_data=trajectory_data,
+                    callback=metrics_callback,
+                )
+
+                # Show metrics summary
+                click.echo()
+                click.secho("=" * 60, fg="blue")
+                click.secho("📊 METRICS SUMMARY", fg="blue", bold=True)
+                click.secho("=" * 60, fg="blue")
+
+                score = metrics_result.get('score', 0)
+                stored = metrics_result.get('stored', False)
+                rejected = metrics_result.get('rejected', False)
+
+                # Get tool success stats from callback
+                metrics = metrics_callback.get_metrics()
+                tool_success = metrics.get('tool_success', [])
+                total_tools = len(tool_success)
+                successful_tools = sum(tool_success) if tool_success else 0
+                failed_tools = total_tools - successful_tools
+
+                click.secho(f"⭐ Score: {score:.3f}", fg="white", bold=True)
+                click.echo(f"   📈 Tool calls: {total_tools} total")
+                click.echo(f"   ✅ Successful: {successful_tools}")
+                click.echo(f"   ❌ Failed: {failed_tools}")
+                if total_tools > 0:
+                    success_rate = successful_tools / total_tools * 100
+                    click.echo(f"   📊 Success rate: {success_rate:.1f}%")
+
+                click.echo()
+                if stored:
+                    click.secho("💾 Trajectory STORED in RAG", fg="green", bold=True)
+                elif rejected:
+                    reason = metrics_result.get('rejection_reason', 'unknown')
+                    click.secho(f"🚫 Trajectory REJECTED: {reason}", fg="red", bold=True)
+                else:
+                    click.secho("⚠️  Trajectory not stored", fg="yellow")
+
+                # Show reflection results if available
+                reflection = metrics_result.get('reflection')
+                if reflection:
+                    click.echo()
+                    click.secho("🤔 REFLECTION ANALYSIS", fg="magenta", bold=True)
+                    click.secho("-" * 60, fg="magenta")
+
+                    critique = reflection.get('critique', 'No critique provided')
+                    click.secho(f"📝 Critique:", fg="white", bold=True)
+                    click.echo(f"   {critique}")
+
+                    successful_patterns = reflection.get('successful_patterns', [])
+                    if successful_patterns:
+                        click.echo()
+                        click.secho(f"✅ Successful Patterns:", fg="green", bold=True)
+                        for pattern in successful_patterns:
+                            click.echo(f"   • {pattern}")
+
+                    failed_patterns = reflection.get('failed_patterns', [])
+                    if failed_patterns:
+                        click.echo()
+                        click.secho(f"❌ Failed Patterns:", fg="red", bold=True)
+                        for pattern in failed_patterns:
+                            click.echo(f"   • {pattern}")
+
+                    efficiency_warning = reflection.get('efficiency_warning')
+                    if efficiency_warning:
+                        click.echo()
+                        click.secho(f"⚠️  Efficiency Warning:", fg="yellow", bold=True)
+                        click.echo(f"   {efficiency_warning}")
+
+                click.secho("=" * 60, fg="blue")
+
+                logger.info(
+                    f"Metrics processed: score={score:.3f}, "
+                    f"stored={stored}, rejected={rejected}"
+                )
+                if rejected:
+                    logger.info(f"Rejection reason: {metrics_result.get('rejection_reason', 'unknown')}")
+            except Exception as e:
+                click.secho(f"⚠️  Metrics processing error: {e}", fg="red", dim=True)
+                logger.warning(f"Failed to process metrics: {e}")
+
 
     async def stream_events(self, task: str, thread_id: str = "default"):
         """Stream detailed agent events for debugging.

@@ -46,6 +46,48 @@ browser_get_snapshot()  # GET FRESH REFS!
 browser_click(ref="e42", force=True)
 ```
 
+### 🚫 NEVER USE browser_evaluate FOR CLICKING
+
+**CRITICAL**: `browser_evaluate` is for data extraction ONLY. Using it to click causes infinite loops.
+
+**WRONG (causes 25+ iteration loops):**
+```python
+# NEVER do this - it loops forever
+browser_evaluate("document.querySelector('button').click()")
+browser_evaluate("Array.from(document.querySelectorAll('button')).find(...)")
+```
+
+**CORRECT:**
+```python
+browser_get_snapshot()
+# Find: button "Friends" [ref=e42]
+browser_click(ref="e42", force=True)
+
+OR use selector
+browser_click(
+  "button=What",
+  "left",
+  false,
+  true
+)
+```
+
+**If browser_evaluate returns null:**
+- This means element not found
+- DO NOT try more JavaScript variations
+- Instead: `browser_get_snapshot()` and use ref from snapshot
+- Maximum 2 attempts with different strategies, then SKIP/REPORT
+
+### 🔄 LOOP PREVENTION
+
+**If same action fails 2 times:**
+1. STOP trying that approach
+2. Try DIFFERENT strategy (different tool, different selector)
+3. Get fresh snapshot
+4. Example: If `browser_evaluate` returns null 2x → Use `browser_click` with ref
+
+**DO NOT repeat the same failed pattern more than 2 times.**
+
 ### 1. ARIA Snapshot & Ref System
 
 The `browser_get_snapshot()` tool returns a YAML accessibility tree using Playwright's `locator.aria_snapshot()` API:
@@ -194,15 +236,26 @@ browser_hover(ref="e28")
 
 ### Privacy Selectors
 
-**The privacy button shows CURRENT setting:**
+**⚠️ CRITICAL: Privacy button has DYNAMIC name**
 
-| Current Privacy | Button Shows |
-|-----------------|--------------|
-| Public | `button=Public` |
-| Friends | `button=Friends` |
-| Only me | `button=Only me` |
+The privacy button's accessible name includes the current setting PLUS dynamic friend names:
+- Full name: `"Edit privacy. Sharing with [setting]"`
+- Setting can be: "Public", "Friends", "Only me", "Friends except: [names]"
 
-**In privacy dialog:**
+**ALWAYS use the STABLE PREFIX (never match dynamic suffix):**
+
+| Current Privacy | Full Accessible Name | ALWAYS Use This Selector |
+|-----------------|----------------------|--------------------------|
+| Public | "Edit privacy. Sharing with Public" | `button="Edit privacy. Sharing with"` |
+| Friends | "Edit privacy. Sharing with Friends" | `button="Edit privacy. Sharing with"` |
+| Only me | "Edit privacy. Sharing with Only me" | `button="Edit privacy. Sharing with"` |
+| Friends except | "Edit privacy. Sharing with Friends except: John, Jane..." | `button="Edit privacy. Sharing with"` |
+
+**WRONG:** ❌ `button="Friends except..."` (dynamic suffix, will fail)
+**WRONG:** ❌ `button="Public"` (doesn't match full name)
+**CORRECT:** ✅ `button="Edit privacy. Sharing with"` (stable prefix)
+
+**In privacy dialog (after clicking privacy button):**
 
 | Option | Selector |
 |--------|----------|
@@ -232,10 +285,10 @@ browser_wait(time=1)
 
 # 4. Get snapshot - find privacy button (shows current setting)
 browser_get_snapshot()
-# Look for button "Public" or "Friends" [ref=eXX]
+# Look for button starting with "Edit privacy. Sharing with" [ref=eXX]
 
-# 5. Click privacy button (use ref from snapshot)
-browser_click(ref="eXX", force=True)  # Replace with actual ref
+# 5. Click privacy button using STABLE PREFIX selector
+browser_click(selector='button="Edit privacy. Sharing with"', force=True)
 browser_wait(time=0.5)
 
 # 6. Select privacy option
@@ -249,6 +302,9 @@ browser_wait(time=0.5)
 # 8. Type post content
 browser_type(selector="role=textbox", text="Your post content")
 browser_wait(time=1)
+
+# 8b. CRITICAL - Refresh snapshot after typing (refs become stale)
+browser_get_snapshot()
 
 # 9. Click Next (if shown)
 browser_click(selector='button=Next', force=True)

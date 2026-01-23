@@ -56,7 +56,9 @@ LOGGED_IN_SELECTORS = [
     'a[href*="/me"][role="link"]',
     '[data-visualcompletion="ignore-dynamic"] svg[aria-label="Account"]',
     '[role="complementary"]',
-    '[role="main"]',
+    # Note: [role="main"] exists on both login and logged-in pages, so we need more specific indicators
+    'button[aria-label*="What\'s on your"]',  # Post composer button (only when logged in)
+    'div[role="main"] button[aria-label*="Menu"]',  # Menu button in feed
 ]
 
 

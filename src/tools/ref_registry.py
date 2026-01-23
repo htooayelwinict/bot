@@ -215,12 +215,15 @@ async def generate_refs(page: Page, root: str = "body") -> tuple[str, SnapshotDa
         if not line.strip():
             continue
 
-        # Match pattern: "- role" or "- role \"name\""
-        match = re.match(r'^(\s*)-\s+(\w+)(?:\s+"([^"]*)")?', line)
+        # Match pattern: "- role" or "- role \"name\"" or "- role 'name'"
+        # Support both single and double quotes for accessibility names
+        # Use backreference to match same quote type, non-greedy content capture
+        match = re.match(r'^(\s*)-\s+(\w+)(?:\s+(["\'])(.*?)\3)?', line)
         if match:
             indent = len(match.group(1))
             role = match.group(2)
-            name = match.group(3) or ""
+            # Group 3 is the quote char, group 4 is the content (or None if no quotes)
+            name = match.group(4) or ""
 
             # Manage stack to find parent
             while len(stack) > 1 and stack[-1][0] >= indent:

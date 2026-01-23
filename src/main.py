@@ -451,7 +451,9 @@ def login(profile: str):
 @click.option("--thread", default="default", help="Conversation thread ID")
 @click.option("--model", default="openrouter/mistralai/devstral-2512:free", help="Model to use (format: openrouter/<model_name>)")
 @click.option("--no-banner", is_flag=True, help="Skip banner display")
-def run(task: str | None, stream: bool, debug: bool, thread: str, model: str, no_banner: bool):
+@click.option("--enable-metrics", is_flag=True, help="Enable trajectory capture, scoring, and storage")
+@click.option("--enable-planning", is_flag=True, help="Enable RAG-based planning from historical workflows")
+def run(task: str | None, stream: bool, debug: bool, thread: str, model: str, no_banner: bool, enable_metrics: bool, enable_planning: bool):
     """Run a task with the Facebook Surfer agent.
 
     If no task is provided, enters interactive mode.
@@ -465,7 +467,15 @@ def run(task: str | None, stream: bool, debug: bool, thread: str, model: str, no
         async with async_init_session(login=False):
             # Create agent
             click.echo(f"\nInitializing agent with {model}...")
-            agent = FacebookSurferAgent(model=model)
+            agent = FacebookSurferAgent(
+                model=model,
+                enable_metrics=enable_metrics,
+                enable_planning=enable_planning,
+            )
+            if enable_metrics:
+                click.echo("Metrics collection enabled.")
+            if enable_planning:
+                click.echo("RAG-based planning enabled.")
             click.echo(f"Agent ready with {agent.tool_count} tools registered.")
 
             # Execute task or run interactively
