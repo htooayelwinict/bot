@@ -104,8 +104,11 @@ For details, see [plan/agent-metrics-rag-learning-20260123-003053/README.md](pla
 - `src/session/` - Facebook session management with HITL login
 - `src/tools/` - Browser automation tools with registry pattern
   - `security.py` - Prompt injection defense for untrusted browser content
-- `src/agents/` - DeepAgents integration with skills middleware
-  - `planner.py` - RAG-based planning agent
+- `src/agents/` - Agent implementations with shared utilities
+  - `facebook_surfer.py` - Main execution agent
+  - `planner.py` - RAG-based workflow planning
+  - `reflection.py` - Trajectory analysis for pattern learning
+  - `utils.py` - Shared utilities (OpenRouter config, JSON parsing)
 - `src/metrics/` - Trajectory capture, scoring, and PII redaction
 - `src/storage/` - Qdrant vector database for semantic retrieval
 - `skills/` - Domain-specific guidance for workflows

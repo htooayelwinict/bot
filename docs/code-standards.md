@@ -61,7 +61,9 @@ def browser_click(element: str, ref: str, force: bool = False) -> dict:
 |----------|---------|
 | `src/session/` | Facebook session management |
 | `src/tools/` | Browser automation tools |
-| `src/agents/` | Agent implementations |
+| `src/agents/` | Agent implementations (main, planner, reflection, utils) |
+| `src/metrics/` | Trajectory capture and scoring |
+| `src/storage/` | Qdrant vector storage |
 | `tests/` | Unit and integration tests |
 | `skills/` | Domain-specific guidance (Markdown) |
 
@@ -123,6 +125,44 @@ def browser_get_page_info(url: str) -> dict:
 | `wrap_and_check(content, label)` | Wrap + detect injection patterns |
 | `has_injection_markers(content)` | Check for suspicious patterns |
 | `strip_zero_width(content)` | Remove invisible Unicode obfuscation |
+
+## Agent Development
+
+### Shared Utilities Pattern
+
+All agents MUST use shared utilities from [`src/agents/utils.py`](src/agents/utils.py):
+
+```python
+from deepagents import create_deep_agent
+from src.agents.utils import create_openrouter_llm, parse_json_with_fallback
+
+class MyAgent:
+    def __init__(self, model: str = "openrouter/model"):
+        # Use shared utility for OpenRouter config
+        self.llm = create_openrouter_llm(
+            model=model,
+            app_title="MyAgent",
+        )
+
+        self.agent = create_deep_agent(
+            model=self.llm,
+            system_prompt=self._build_system_prompt(),
+            tools=[],
+        )
+
+    def _parse_response(self, text: str) -> dict:
+        # Use shared utility for JSON parsing
+        return parse_json_with_fallback(text, fallback={})
+```
+
+### Agent File Organization
+
+| File | Purpose |
+|------|---------|
+| `facebook_surfer.py` | Main execution agent |
+| `planner.py` | RAG-based workflow planning |
+| `reflection.py` | Trajectory analysis |
+| `utils.py` | **SHARED** utilities (DO NOT duplicate) |
 
 ## Testing
 

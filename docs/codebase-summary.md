@@ -6,7 +6,10 @@
 src/
 ├── agents/
 │   ├── __init__.py
-│   └── facebook_surfer.py      # DeepAgents integration
+│   ├── facebook_surfer.py      # Main execution agent
+│   ├── planner.py              # RAG-based workflow planning
+│   ├── reflection.py           # Trajectory analysis agent
+│   └── utils.py                # Shared agent utilities
 ├── session/
 │   └── __init__.py              # Facebook session management
 ├── tools/
@@ -49,7 +52,10 @@ config/
 | [`src/tools/registry.py`](src/tools/registry.py) | Auto-discovers & registers tools, converts to LangChain StructuredTool |
 | [`src/tools/base.py`](src/tools/base.py) | BaseTool with global session/page context |
 | [`src/tools/security.py`](src/tools/security.py) | Prompt injection defense (wrap_untrusted, detect, sanitize) |
-| [`src/agents/facebook_surfer.py`](src/agents/facebook_surfer.py) | DeepAgents + LangGraph agent with skills middleware |
+| [`src/agents/facebook_surfer.py`](src/agents/facebook_surfer.py) | Main execution agent with DeepAgents + LangGraph |
+| [`src/agents/planner.py`](src/agents/planner.py) | RAG-based workflow planning with Grok reasoning |
+| [`src/agents/reflection.py`](src/agents/reflection.py) | Trajectory analysis for pattern learning |
+| [`src/agents/utils.py`](src/agents/utils.py) | Shared utilities (OpenRouter config, JSON parsing) |
 | [`src/main.py`](src/main.py) | Click CLI: login, run, test commands |
 | [`pyproject.toml`](pyproject.toml) | Dependencies, extras (agent, dev, memory) |
 
@@ -88,12 +94,26 @@ Registered tools (22 total):
 
 ## Agent Architecture
 
-[`FacebookSurferAgent`](src/agents/facebook_surfer.py):
+**Shared Utilities** ([`src/agents/utils.py`](src/agents/utils.py)):
+- `create_openrouter_llm()`: Centralized OpenRouter ChatOpenAI configuration
+- `parse_json_with_fallback()`: JSON parsing with markdown code block support
+
+**Main Execution Agent** ([`facebook_surfer.py`](src/agents/facebook_surfer.py)):
 - Uses DeepAgents `create_deep_agent()` with LangGraph backend
 - Skills middleware loads domain guidance from `skills/` filesystem
 - `MemorySaver` checkpointer for conversation state
 - `InMemoryStore` for context persistence
 - OpenRouter model support via `openrouter/<model>` format
+
+**Planning Agent** ([`planner.py`](src/agents/planner.py)):
+- RAG-based workflow planning using Qdrant vector retrieval
+- Generates success plans from historical patterns
+- Uses shared `create_openrouter_llm()` with Grok reasoning model
+
+**Reflection Agent** ([`reflection.py`](src/agents/reflection.py)):
+- Analyzes execution trajectories to identify patterns
+- Generates structured critiques with successful/failed patterns
+- Uses shared utilities for OpenRouter and JSON parsing
 
 ## CLI Commands
 
