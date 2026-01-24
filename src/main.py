@@ -89,12 +89,7 @@ def run_single_task(agent: FacebookSurferAgent, task: str, stream: bool, thread_
                         click.echo(f"[Update] {content}")
                     elif isinstance(content, list):
                         for part in content:
-                            if isinstance(part, str):
-                                click.echo(f"[Update] {part}")
-                            elif isinstance(part, dict):
-                                # Extract text from content blocks
-                                text = part.get("text", str(part))
-                                click.echo(f"[Update] {text}")
+                            click.echo(f"[Update] {_format_content_block(part)}")
             if "__interrupt__" in event:
                 click.echo(f"[Interrupt] {event['__interrupt__']}")
                 # Handle HITL here if needed
@@ -105,18 +100,7 @@ def run_single_task(agent: FacebookSurferAgent, task: str, stream: bool, thread_
         if "messages" in result and result["messages"]:
             latest_msg = result["messages"][-1]
             if hasattr(latest_msg, "content"):
-                content = latest_msg.content
-                # Handle content that's a list of content blocks
-                if isinstance(content, list):
-                    for block in content:
-                        if isinstance(block, dict):
-                            click.echo(block.get("text", str(block)))
-                        elif isinstance(block, str):
-                            click.echo(block)
-                        else:
-                            click.echo(str(block))
-                elif content:  # Non-empty string or other truthy value
-                    click.echo(content)
+                _display_message_content(latest_msg.content)
         else:
             click.echo(result)
 
@@ -165,18 +149,7 @@ def run_interactive(agent: FacebookSurferAgent, thread_id: str):
             if "messages" in result and result["messages"]:
                 latest_msg = result["messages"][-1]
                 if hasattr(latest_msg, "content"):
-                    content = latest_msg.content
-                    # Handle content that's a list of content blocks
-                    if isinstance(content, list):
-                        for block in content:
-                            if isinstance(block, dict):
-                                click.echo(block.get("text", str(block)))
-                            elif isinstance(block, str):
-                                click.echo(block)
-                            else:
-                                click.echo(str(block))
-                    elif content:  # Non-empty string or other truthy value
-                        click.echo(content)
+                    _display_message_content(latest_msg.content)
             click.echo("")
 
         except KeyboardInterrupt:
@@ -226,6 +199,22 @@ async def async_init_session(login: bool = False, profile: str = "./profiles/fac
             set_current_async_page(session.get_async_page())
 
         yield session
+
+
+def _format_content_block(block: dict | str) -> str:
+    """Format a single content block for display."""
+    if isinstance(block, dict):
+        return block.get("text", str(block))
+    return str(block)
+
+
+def _display_message_content(content: str | list) -> None:
+    """Display message content, handling both string and list formats."""
+    if isinstance(content, list):
+        for block in content:
+            click.echo(_format_content_block(block))
+    elif content:
+        click.echo(content)
 
 
 async def run_single_task_async(agent: FacebookSurferAgent, task: str, stream: bool, debug: bool, thread_id: str):
@@ -311,7 +300,7 @@ async def run_single_task_async(agent: FacebookSurferAgent, task: str, stream: b
                 if hasattr(output, "content"):
                     content = output.content
                     if isinstance(content, str) and content.strip():
-                        click.secho(f"🧠 LLM Response:", fg="blue", dim=True)
+                        click.secho("🧠 LLM Response:", fg="blue", dim=True)
                         click.echo(f"   {content[:200]}...")
 
     elif stream:
@@ -355,13 +344,13 @@ async def run_single_task_async(agent: FacebookSurferAgent, task: str, stream: b
                         content = msg.content
                         # Skip if only tool calls (no text response)
                         if isinstance(content, str) and content.strip():
-                            click.secho(f"\n🤖 Agent:", fg="green", bold=True)
+                            click.secho("\n🤖 Agent:", fg="green", bold=True)
                             click.echo(content)
                         elif isinstance(content, list):
                             text_parts = [p.get("text", "") if isinstance(p, dict) else str(p) for p in content]
                             text = "\n".join(p for p in text_parts if p.strip())
                             if text:
-                                click.secho(f"\n🤖 Agent:", fg="green", bold=True)
+                                click.secho("\n🤖 Agent:", fg="green", bold=True)
                                 click.echo(text)
 
             if "__interrupt__" in event:
@@ -374,18 +363,7 @@ async def run_single_task_async(agent: FacebookSurferAgent, task: str, stream: b
         if "messages" in result and result["messages"]:
             latest_msg = result["messages"][-1]
             if hasattr(latest_msg, "content"):
-                content = latest_msg.content
-                # Handle content that's a list of content blocks
-                if isinstance(content, list):
-                    for block in content:
-                        if isinstance(block, dict):
-                            click.echo(block.get("text", str(block)))
-                        elif isinstance(block, str):
-                            click.echo(block)
-                        else:
-                            click.echo(str(block))
-                elif content:  # Non-empty string or other truthy value
-                    click.echo(content)
+                _display_message_content(latest_msg.content)
         else:
             click.echo(result)
 
@@ -434,18 +412,7 @@ async def run_interactive_async(agent: FacebookSurferAgent, thread_id: str):
             if "messages" in result and result["messages"]:
                 latest_msg = result["messages"][-1]
                 if hasattr(latest_msg, "content"):
-                    content = latest_msg.content
-                    # Handle content that's a list of content blocks
-                    if isinstance(content, list):
-                        for block in content:
-                            if isinstance(block, dict):
-                                click.echo(block.get("text", str(block)))
-                            elif isinstance(block, str):
-                                click.echo(block)
-                            else:
-                                click.echo(str(block))
-                    elif content:  # Non-empty string or other truthy value
-                        click.echo(content)
+                    _display_message_content(latest_msg.content)
             click.echo("")
 
         except KeyboardInterrupt:
@@ -484,7 +451,9 @@ def login(profile: str):
 @click.option("--thread", default="default", help="Conversation thread ID")
 @click.option("--model", default="openrouter/mistralai/devstral-2512:free", help="Model to use (format: openrouter/<model_name>)")
 @click.option("--no-banner", is_flag=True, help="Skip banner display")
-def run(task: str | None, stream: bool, debug: bool, thread: str, model: str, no_banner: bool):
+@click.option("--enable-metrics", is_flag=True, help="Enable trajectory capture, scoring, and storage")
+@click.option("--enable-planning", is_flag=True, help="Enable RAG-based planning from historical workflows")
+def run(task: str | None, stream: bool, debug: bool, thread: str, model: str, no_banner: bool, enable_metrics: bool, enable_planning: bool):
     """Run a task with the Facebook Surfer agent.
 
     If no task is provided, enters interactive mode.
@@ -497,8 +466,18 @@ def run(task: str | None, stream: bool, debug: bool, thread: str, model: str, no
         # Initialize session (restore existing) and run within context
         async with async_init_session(login=False):
             # Create agent
-            click.echo(f"\nInitializing agent with {model}...")
-            agent = FacebookSurferAgent(model=model)
+            # Display actual model name (strip openrouter/ prefix for clarity)
+            display_model = model.replace("openrouter/", "")
+            click.echo(f"\nInitializing agent with {display_model}...")
+            agent = FacebookSurferAgent(
+                model=model,
+                enable_metrics=enable_metrics,
+                enable_planning=enable_planning,
+            )
+            if enable_metrics:
+                click.echo("Metrics collection enabled.")
+            if enable_planning:
+                click.echo("RAG-based planning enabled.")
             click.echo(f"Agent ready with {agent.tool_count} tools registered.")
 
             # Execute task or run interactively

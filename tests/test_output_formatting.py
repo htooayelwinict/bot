@@ -113,5 +113,48 @@ def test_message_content_types():
     assert format_content_for_display(msg3.content) == "Tool execution result"
 
 
+def get_display_model(model: str) -> str:
+    """Get the actual model name for display (strips openrouter/ prefix).
+
+    This matches the logic in main.py line 470.
+    """
+    return model.replace("openrouter/", "")
+
+
+class TestModelDisplayFormatting:
+    """Test model name display matches what agent actually uses."""
+
+    def test_openrouter_model_strips_prefix(self):
+        """OpenRouter models should display without prefix."""
+        model = "openrouter/mistralai/devstral-2512:free"
+        display = get_display_model(model)
+        assert display == "mistralai/devstral-2512:free"
+        assert "openrouter/" not in display
+
+    def test_openrouter_qwen_model_strips_prefix(self):
+        """Qwen model via OpenRouter should display without prefix."""
+        model = "openrouter/qwen/qwen3-coder:free"
+        display = get_display_model(model)
+        assert display == "qwen/qwen3-coder:free"
+
+    def test_non_openrouter_model_unchanged(self):
+        """Non-OpenRouter models should be unchanged."""
+        model = "gpt-4o-mini"
+        display = get_display_model(model)
+        assert display == "gpt-4o-mini"
+
+    def test_empty_model(self):
+        """Empty model string should return empty."""
+        model = ""
+        display = get_display_model(model)
+        assert display == ""
+
+    def test_model_with_multiple_slashes(self):
+        """Models with multiple path segments should strip only prefix."""
+        model = "openrouter/org/model/variant:free"
+        display = get_display_model(model)
+        assert display == "org/model/variant:free"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

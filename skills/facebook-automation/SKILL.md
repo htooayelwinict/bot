@@ -1,7 +1,7 @@
 ---
 name: facebook-automation
 description: Facebook automation including posting with privacy settings, interactions, messaging, and navigation workflows
-allowed-tools: browser_navigate browser_click browser_type browser_fill_form browser_get_snapshot browser_screenshot browser_wait browser_navigate_back browser_get_page_info browser_hover browser_press_key browser_evaluate browser_scroll
+allowed-tools: browser_navigate browser_click browser_type browser_fill_form browser_get_snapshot browser_screenshot browser_wait browser_navigate_back browser_get_page_info browser_hover browser_press_key browser_evaluate browser_scroll write_todos
 ---
 
 # Facebook Automation Skill
@@ -14,9 +14,26 @@ Automation guide for Facebook web interface - posts, privacy settings, interacti
 - Interact with posts (like, comment, share)
 - Send messages via Messenger
 
+**If you received a Success Plan with `working_selectors`, try those patterns first.**
+
 ---
 
 ## Critical Rules
+
+### 🚫 NEVER USE browser_evaluate FOR CLICKING (CAUSES INFINITE LOOPS)
+
+**STOP! If you're about to use browser_evaluate to click, DON'T.**
+
+This is the #1 cause of agent failures. browser_evaluate for clicking:
+- Returns null (element not found in DOM)
+- Agent retries with different JS variations
+- Loops 25+ times, never works
+
+**If browser_evaluate returns null ONCE:**
+1. STOP immediately
+2. Call `browser_get_snapshot()`
+3. Use `browser_click(ref="eXX", force=True)` with ref from snapshot
+4. If element not in snapshot, the dialog may not have opened - see "Dialog Not Opening" below
 
 ### ⚠️ REFS BECOME STALE AFTER EVERY ACTION
 
@@ -45,6 +62,24 @@ browser_get_snapshot()  # GET FRESH REFS!
 # e42 = button "Friends" (privacy button)
 browser_click(ref="e42", force=True)
 ```
+
+### � DIALOG NOT OPENING?
+
+If you clicked to open a dialog but snapshot doesn't show dialog elements:
+1. `browser_wait(time=2)` - give React time to render
+2. `browser_get_snapshot()` - check again
+3. If still no dialog, try clicking again with `force=True`
+4. If still fails after 2 attempts, report the issue
+
+### 🔄 LOOP PREVENTION
+
+**If same action fails 2 times:**
+1. STOP trying that approach
+2. Try DIFFERENT strategy (different tool, different selector)
+3. Get fresh snapshot
+4. Example: If `browser_evaluate` returns null 2x → Use `browser_click` with ref
+
+**DO NOT repeat the same failed pattern more than 2 times.**
 
 ### 1. ARIA Snapshot & Ref System
 
@@ -104,6 +139,7 @@ browser_get_snapshot()  # REQUIRED after every action
 | Complete ALL dialog steps | Selecting ≠ confirming |
 | Verify with snapshot before "done" | Task isn't complete until verified |
 | **Read button names carefully** | "Close composer" ≠ privacy button! |
+| **Max 2 retries per approach** | If it fails twice, try different strategy |
 
 ---
 
@@ -194,15 +230,26 @@ browser_hover(ref="e28")
 
 ### Privacy Selectors
 
-**The privacy button shows CURRENT setting:**
+**⚠️ CRITICAL: Privacy button has DYNAMIC name**
 
-| Current Privacy | Button Shows |
-|-----------------|--------------|
-| Public | `button=Public` |
-| Friends | `button=Friends` |
-| Only me | `button=Only me` |
+The privacy button's accessible name includes the current setting PLUS dynamic friend names:
+- Full name: `"Edit privacy. Sharing with [setting]"`
+- Setting can be: "Public", "Friends", "Only me", "Friends except: [names]"
 
-**In privacy dialog:**
+**ALWAYS use the STABLE PREFIX (never match dynamic suffix):**
+
+| Current Privacy | Full Accessible Name | ALWAYS Use This Selector |
+|-----------------|----------------------|--------------------------|
+| Public | "Edit privacy. Sharing with Public" | `button="Edit privacy. Sharing with"` |
+| Friends | "Edit privacy. Sharing with Friends" | `button="Edit privacy. Sharing with"` |
+| Only me | "Edit privacy. Sharing with Only me" | `button="Edit privacy. Sharing with"` |
+| Friends except | "Edit privacy. Sharing with Friends except: John, Jane..." | `button="Edit privacy. Sharing with"` |
+
+**WRONG:** ❌ `button="Friends except..."` (dynamic suffix, will fail)
+**WRONG:** ❌ `button="Public"` (doesn't match full name)
+**CORRECT:** ✅ `button="Edit privacy. Sharing with"` (stable prefix)
+
+**In privacy dialog (after clicking privacy button):**
 
 | Option | Selector |
 |--------|----------|
@@ -232,10 +279,10 @@ browser_wait(time=1)
 
 # 4. Get snapshot - find privacy button (shows current setting)
 browser_get_snapshot()
-# Look for button "Public" or "Friends" [ref=eXX]
+# Look for button starting with "Edit privacy. Sharing with" [ref=eXX]
 
-# 5. Click privacy button (use ref from snapshot)
-browser_click(ref="eXX", force=True)  # Replace with actual ref
+# 5. Click privacy button using STABLE PREFIX selector
+browser_click(selector='button="Edit privacy. Sharing with"', force=True)
 browser_wait(time=0.5)
 
 # 6. Select privacy option
@@ -249,6 +296,9 @@ browser_wait(time=0.5)
 # 8. Type post content
 browser_type(selector="role=textbox", text="Your post content")
 browser_wait(time=1)
+
+# 8b. CRITICAL - Refresh snapshot after typing (refs become stale)
+browser_get_snapshot()
 
 # 9. Click Next (if shown)
 browser_click(selector='button=Next', force=True)

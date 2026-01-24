@@ -1,11 +1,8 @@
 """Base tool classes and utilities for LangChain tool integration."""
 
 import asyncio
-import json
-import time
 from contextvars import ContextVar
 from functools import wraps
-from pathlib import Path
 from typing import Any, Callable, Optional
 
 from playwright.async_api import BrowserContext as AsyncBrowserContext
@@ -65,11 +62,7 @@ def get_current_async_page() -> AsyncPage | None:
     Uses global session directly (ContextVars don't propagate across LangGraph tasks).
     """
     from src.session import get_current_async_page as get_global_async_page
-    page = get_global_async_page()
-    if page is None:
-        import sys
-        print("[WARN] get_current_async_page: No page in global session", file=sys.stderr)
-    return page
+    return get_global_async_page()
 
 
 def set_current_async_context(context: AsyncBrowserContext) -> None:
@@ -135,6 +128,7 @@ class ToolResult(BaseModel):
     def to_string(self) -> str:
         """Convert to string for LangChain consumption."""
         if self.data:
+            import json
             return f"{self.content}\n{json.dumps(self.data, indent=2)}"
         return self.content
 
@@ -190,13 +184,9 @@ def async_session_tool(func: Callable) -> Callable:
 
     @wraps(func)
     async def wrapper(*args: Any, **kwargs: Any) -> str:
-        import sys
-        print(f"[TOOL] {func.__name__} called with args={args}, kwargs keys={list(kwargs.keys())}", file=sys.stderr)
-
         # Check if page is already provided in kwargs (for testing)
         if "page" not in kwargs:
             page = get_current_async_page()
-            print(f"[TOOL] {func.__name__} got page: {page is not None}", file=sys.stderr)
             if not page:
                 return ToolResult(
                     success=False,
@@ -206,7 +196,6 @@ def async_session_tool(func: Callable) -> Callable:
 
         try:
             result = await func(*args, **kwargs)
-            print(f"[TOOL] {func.__name__} completed successfully", file=sys.stderr)
             # If result is already a string, return it
             if isinstance(result, str):
                 return result
@@ -217,7 +206,6 @@ def async_session_tool(func: Callable) -> Callable:
             return str(result)
         except Exception as e:
             import traceback
-            print(f"[TOOL] {func.__name__} failed: {e}", file=sys.stderr)
             traceback.print_exc()
             return ToolResult(
                 success=False,
@@ -264,6 +252,9 @@ def with_screenshot(func: Callable) -> Callable:
 
     @wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> str:
+        import time
+        from pathlib import Path
+
         # Get page for screenshot
         page = get_current_page()
         if page:
@@ -299,6 +290,9 @@ def _cleanup_old_screenshots(max_age_seconds: int = 3600) -> int:
     Returns:
         Number of screenshots deleted
     """
+    import time
+    from pathlib import Path
+
     screenshot_dir = Path("./screenshots")
     if not screenshot_dir.exists():
         return 0

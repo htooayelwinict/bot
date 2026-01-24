@@ -56,7 +56,9 @@ LOGGED_IN_SELECTORS = [
     'a[href*="/me"][role="link"]',
     '[data-visualcompletion="ignore-dynamic"] svg[aria-label="Account"]',
     '[role="complementary"]',
-    '[role="main"]',
+    # Note: [role="main"] exists on both login and logged-in pages, so we need more specific indicators
+    'button[aria-label*="What\'s on your"]',  # Post composer button (only when logged in)
+    'div[role="main"] button[aria-label*="Menu"]',  # Menu button in feed
 ]
 
 
@@ -654,12 +656,6 @@ def set_global_session(session: Optional[FacebookSessionManager]) -> None:
     """Set the global session manager for tool access."""
     global _global_session
     _global_session = session
-    import sys
-    if session:
-        page = getattr(session, "async_page", None)
-        print(f"[DEBUG] set_global_session: session set, async_page={page is not None}", file=sys.stderr)
-    else:
-        print("[DEBUG] set_global_session: session is None", file=sys.stderr)
 
 
 def get_global_session() -> Optional[FacebookSessionManager]:

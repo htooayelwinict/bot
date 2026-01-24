@@ -4,10 +4,10 @@ Creates a Facebook post with "Only me" privacy setting using existing browser to
 """
 
 import asyncio
+
 from src.session import FacebookSessionManager, set_global_session
-from src.tools.navigation import browser_navigate
 from src.tools.interaction import browser_click, browser_type
-from src.tools.utilities import browser_wait, browser_get_snapshot
+from src.tools.navigation import browser_navigate
 
 
 async def create_facebook_post_onlyme_with_tools(message: str = "Test post - only me"):

@@ -103,6 +103,72 @@ class FacebookSurferAgent:
 
 ---
 
+## Shared Agent Utilities
+
+All agent modules use shared utilities from [`src/agents/utils.py`](src/agents/utils.py) to avoid code duplication.
+
+### `create_openrouter_llm()`
+
+Centralized OpenRouter ChatOpenAI configuration:
+
+```python
+from src.agents.utils import create_openrouter_llm
+
+llm = create_openrouter_llm(
+    model="x-ai/grok-4.1-fast",
+    temperature=0.0,
+    api_key=None,  # Uses OPENROUTER_API_KEY env var
+    app_title="MyAgent",
+    extra_body={"reasoning": {"effort": "medium"}},  # Optional
+)
+```
+
+**Features:**
+- Strips `openrouter/` prefix automatically
+- Configures OpenRouter base URL and headers
+- Supports extra body parameters (e.g., reasoning config)
+
+### `parse_json_with_fallback()`
+
+Robust JSON parsing from LLM responses:
+
+```python
+from src.agents.utils import parse_json_with_fallback
+
+result = parse_json_with_fallback(
+    llm_response,
+    fallback={"error": "parse failed", "raw_text": llm_response}
+)
+```
+
+**Handles:**
+1. Direct JSON parsing
+2. Markdown code blocks (` ```json ... ``` `)
+3. Fallback to provided default or `{"raw_text": text}`
+
+### Usage Pattern
+
+All agents follow this pattern:
+
+```python
+from deepagents import create_deep_agent
+from src.agents.utils import create_openrouter_llm, parse_json_with_fallback
+
+class MyAgent:
+    def __init__(self, model: str = "openrouter/model"):
+        self.llm = create_openrouter_llm(model, app_title="MyAgent")
+        self.agent = create_deep_agent(
+            model=self.llm,
+            system_prompt="Your prompt here",
+            tools=[],
+        )
+
+    def _parse_response(self, text: str) -> dict:
+        return parse_json_with_fallback(text, fallback={})
+```
+
+---
+
 ## LangGraph Runtime
 
 ### State Machine Architecture

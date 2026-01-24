@@ -72,7 +72,11 @@ coverage/
 htmlcov/
 .pytest_cache/
 
+# Qdrant vector database
+qdrant_db/
+
 # Docker
 .dockerignore
 
 .claude/
+CLAUDE.md

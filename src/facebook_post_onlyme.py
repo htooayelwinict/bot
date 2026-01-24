@@ -18,7 +18,7 @@ async def create_facebook_post_onlyme(page, message: str = "Test post - only me"
     # Step 2: Close any notification dialogs that might appear
     try:
         await page.get_by_text('Close').click()
-    except:
+    except Exception:
         pass  # No dialog to close
 
     # Step 3: Click the "What's on your mind" button to open post creator
