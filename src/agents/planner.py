@@ -4,17 +4,16 @@ Retrieves similar historical workflows and crafts success plans
 to guide the execution agent using DeepAgents framework with Grok reasoning model.
 """
 
-import os
-import logging
 import json
-import re
+import logging
 from typing import Any
 
+import click
 from deepagents import create_deep_agent
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from qdrant_client import AsyncQdrantClient
 
+from src.agents.utils import create_openrouter_llm, parse_json_with_fallback
 from src.storage.qdrant_client import QdrantManager
 from src.storage.retrieval import retrieve_similar_trajectories
 
@@ -44,7 +43,7 @@ class PlanningAgent:
         """
         self.model = model
         self.qdrant_client = qdrant_client
-        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
+        self.api_key = api_key  # create_openrouter_llm handles env fallback
         self.temperature = 0.0
 
         # Build system prompt
@@ -81,21 +80,16 @@ Be concise and focus on proven patterns that worked.
     def _create_agent(self):
         """Create the DeepAgent instance for planning."""
         # Configure ChatOpenAI with OpenRouter and reasoning tokens
-        model_config = ChatOpenAI(
+        model_config = create_openrouter_llm(
             model=self.model,
             temperature=self.temperature,
-            base_url="https://openrouter.ai/api/v1",
             api_key=self.api_key,
-            default_headers={
-                "HTTP-Referer": "https://github.com/htooayelwinict/bot",
-                "X-Title": "FacebookSurferPlanningAgent",
-            },
-            # Enable reasoning tokens for Grok
+            app_title="FacebookSurferPlanningAgent",
             extra_body={
                 "reasoning": {
                     "effort": "medium",  # Allocate ~50% of tokens for reasoning
                 }
-            }
+            },
         )
 
         # Create DeepAgent (no tools needed for planning)
@@ -141,7 +135,6 @@ Be concise and focus on proven patterns that worked.
         )
 
         # Show retrieved patterns (debug output)
-        import click
         if similar:
             click.secho(f"   📚 Found {len(similar)} similar pattern(s):", fg="cyan")
             for i, pattern in enumerate(similar, 1):
@@ -179,13 +172,13 @@ Be concise and focus on proven patterns that worked.
                 if plan_content:
                     # Parse JSON plan
                     plan_data = self._parse_json_result(plan_content)
-                    
+
                     # Convert to string for legacy compatibility (we'll update consumer later)
                     # OR return the raw dict if we update the consumer first
                     # For now, let's keep the return type as "string" but containing JSON,
                     # or better: update the return type hint to Any or dict.
                     # Given the plan says "Inject plan as JSON object", we should return dict.
-                    
+
                     logger.info(f"Generated structured success plan for task: {task[:50]}...")
                     return json.dumps(plan_data, indent=2)
 
@@ -239,28 +232,18 @@ Structure:
 
     def _parse_json_result(self, text: str) -> dict:
         """Parse JSON from LLM response, handling markdown blocks."""
-        try:
-            # First try direct parse
-            return json.loads(text)
-        except json.JSONDecodeError:
-            # Try to extract from code block
-            match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
-            if match:
-                try:
-                    return json.loads(match.group(1))
-                except json.JSONDecodeError:
-                    pass
-            
-            # Use raw fallback if needed
-            return {
+        return parse_json_with_fallback(
+            text,
+            fallback={
                 "analysis": "Failed to parse structured plan",
                 "suggested_plan": [line for line in text.split('\n') if line.strip()],
-                "similar_patterns": []
-            }
+                "similar_patterns": [],
+            },
+        )
 
     def _format_workflows(self, workflows: list[dict[str, Any]]) -> str:
         """Format workflows for prompt injection with full tool parameters.
-        
+
         CRITICAL: Preserves input parameters (selectors, refs, text) for LLM consumption.
         This enables the execution agent to reuse working selectors instead of trial-and-error.
         """
@@ -268,14 +251,14 @@ Structure:
         for i, w in enumerate(workflows, 1):
             task = w.get("task", "Unknown")
             score = w.get("score", 0.0)
-            
+
             # Extract tool calls with FULL parameters (P0 FIX)
             tool_calls = w.get("tool_calls", [])
-            
+
             # Extract working selectors from successful tool calls
             working_selectors = []
             detailed_steps = []
-            
+
             for j, tc in enumerate(tool_calls[:20], 1):  # Limit to 20 most relevant
                 # Handle case where tc might be a string instead of dict
                 if isinstance(tc, str):
@@ -284,11 +267,11 @@ Structure:
                 if not isinstance(tc, dict):
                     detailed_steps.append(f"{j}. {str(tc)}")
                     continue
-                    
+
                 tool_name = tc.get("tool", "unknown").replace("browser_", "")
                 inputs = tc.get("input", {})
                 success = tc.get("success", True)
-                
+
                 # Handle case where inputs is a string instead of dict
                 if isinstance(inputs, str):
                     status_marker = "✓" if success else "✗"
@@ -297,12 +280,12 @@ Structure:
                 if not isinstance(inputs, dict):
                     detailed_steps.append(f"{j}. {tool_name}()")
                     continue
-                
+
                 # Build detailed step with parameters
                 if inputs:
                     # Extract key parameters for different tool types
                     param_parts = []
-                    
+
                     # Selector/ref (critical for click, type, etc.)
                     if "ref" in inputs:
                         param_parts.append(f'ref="{inputs["ref"]}"')
@@ -312,27 +295,27 @@ Structure:
                                 "ref": inputs["ref"],
                                 "element": inputs.get("element", "unknown")
                             })
-                    
+
                     # URL for navigation
                     if "url" in inputs:
                         param_parts.append(f'url="{inputs["url"]}"')
-                    
+
                     # Text content (truncate if long)
                     if "text" in inputs:
                         text_val = inputs.get("text", "")
                         text_preview = str(text_val)[:50] + "..." if len(str(text_val)) > 50 else str(text_val)
                         param_parts.append(f'text="{text_preview}"')
-                    
+
                     # Element description
                     if "element" in inputs:
                         param_parts.append(f'element="{inputs["element"]}"')
-                    
+
                     params_str = ", ".join(param_parts) if param_parts else "..."
                     status_marker = "✓" if success else "✗"
                     detailed_steps.append(f"{j}. {status_marker} {tool_name}({params_str})")
                 else:
                     detailed_steps.append(f"{j}. {tool_name}()")
-            
+
             # Format working selectors section
             selectors_section = ""
             if working_selectors:
@@ -345,11 +328,11 @@ Structure:
             critique = reflection.get("critique", "N/A")
             failed_patterns = reflection.get("failed_patterns", [])
             successful_patterns = reflection.get("successful_patterns", [])
-            
+
             warnings = ""
             if failed_patterns:
                 warnings = "\n⚠️ AVOID THESE FAILED PATTERNS:\n" + "\n".join([f"  - {p}" for p in failed_patterns[:5]])
-            
+
             successes = ""
             if successful_patterns:
                 successes = "\n✅ SUCCESSFUL PATTERNS:\n" + "\n".join([f"  - {p}" for p in successful_patterns[:5]])

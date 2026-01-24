@@ -5,7 +5,6 @@ autonomous web interaction capabilities with HITL support.
 Skills middleware enables domain-specific guidance (e.g., Facebook automation).
 """
 
-import os
 from pathlib import Path
 
 from deepagents.backends.filesystem import FilesystemBackend
@@ -13,6 +12,7 @@ from deepagents.middleware.skills import SkillsMiddleware
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
 
+from src.agents.utils import create_openrouter_llm
 from src.tools.registry import ToolRegistry, register_all_tools
 
 
@@ -52,7 +52,7 @@ class FacebookSurferAgent:
         self.enable_metrics = enable_metrics
         self.enable_planning = enable_planning
         self.temperature = temperature
-        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
+        self.api_key = api_key
 
         # Register all tools
         self.registry: ToolRegistry = register_all_tools()
@@ -239,7 +239,6 @@ FOLLOW SKILL WORKFLOWS EXACTLY.
     def _create_agent(self):
         """Create the DeepAgent instance with skills middleware."""
         from deepagents import create_deep_agent
-        from langchain_openai import ChatOpenAI
 
         # Configure model
         model_config = None
@@ -248,19 +247,13 @@ FOLLOW SKILL WORKFLOWS EXACTLY.
 
         # Configure OpenRouter if using openrouter model
         if self.model.startswith("openrouter/"):
-            # Extract actual model name (remove "openrouter/" prefix)
-            model_name = self.model.replace("openrouter/", "")
-            # Create ChatOpenAI with OpenRouter config
-            model_config = ChatOpenAI(
-                model=model_name,
+            model_config = create_openrouter_llm(
+                model=self.model,
                 temperature=temperature,
-                base_url="https://openrouter.ai/api/v1",
                 api_key=self.api_key,
-                default_headers={
-                    "HTTP-Referer": "https://github.com/htooayelwinict/bot",
-                    "X-Title": "FacebookSurferAgent",
-                },
+                app_title="FacebookSurferAgent",
             )
+            model_name = model_config  # Use the configured ChatOpenAI instance
 
         # Configure HITL interrupts for sensitive/high-risk actions
         # Focus on tools that pose highest injection risk
@@ -381,6 +374,7 @@ Execute this task following the success plan above."""
             Agent state events during execution
         """
         import logging
+
         import click
 
         logger = logging.getLogger(__name__)
@@ -401,20 +395,20 @@ Execute this task following the success plan above."""
             if plan and "No similar historical workflows" not in plan:
                 click.secho("✅ Found historical patterns!", fg="green", bold=True)
                 click.echo()
-                
+
                 # Try to parse and pretty print structured plan
                 import json
                 try:
                     plan_data = json.loads(plan)
-                    
+
                     click.secho("🧐 ANALYSIS:", fg="yellow", bold=True)
                     click.echo(f"   {plan_data.get('analysis', 'No analysis provided.')}")
                     click.echo()
-                    
+
                     click.secho("📝 SUGGESTED PLAN:", fg="yellow", bold=True)
                     for i, step in enumerate(plan_data.get('suggested_plan', []), 1):
                         click.echo(f"   {i}. {step}")
-                        
+
                 except Exception:
                     # Fallback for legacy text plans
                     click.secho("📝 Generated Success Plan:", fg="yellow", bold=True)
@@ -423,7 +417,7 @@ Execute this task following the success plan above."""
                         click.echo(f"   {line}")
                     if len(plan_lines) > 15:
                         click.secho(f"   ... ({len(plan_lines) - 15} more lines)", dim=True)
-                
+
                 click.echo()
 
                 # Inject JSON plan
@@ -522,27 +516,27 @@ Execute this task following the success plan above."""
                     click.secho("-" * 60, fg="magenta")
 
                     critique = reflection.get('critique', 'No critique provided')
-                    click.secho(f"📝 Critique:", fg="white", bold=True)
+                    click.secho("📝 Critique:", fg="white", bold=True)
                     click.echo(f"   {critique}")
 
                     successful_patterns = reflection.get('successful_patterns', [])
                     if successful_patterns:
                         click.echo()
-                        click.secho(f"✅ Successful Patterns:", fg="green", bold=True)
+                        click.secho("✅ Successful Patterns:", fg="green", bold=True)
                         for pattern in successful_patterns:
                             click.echo(f"   • {pattern}")
 
                     failed_patterns = reflection.get('failed_patterns', [])
                     if failed_patterns:
                         click.echo()
-                        click.secho(f"❌ Failed Patterns:", fg="red", bold=True)
+                        click.secho("❌ Failed Patterns:", fg="red", bold=True)
                         for pattern in failed_patterns:
                             click.echo(f"   • {pattern}")
 
                     efficiency_warning = reflection.get('efficiency_warning')
                     if efficiency_warning:
                         click.echo()
-                        click.secho(f"⚠️  Efficiency Warning:", fg="yellow", bold=True)
+                        click.secho("⚠️  Efficiency Warning:", fg="yellow", bold=True)
                         click.echo(f"   {efficiency_warning}")
 
                 click.secho("=" * 60, fg="blue")

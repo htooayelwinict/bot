@@ -1,12 +1,9 @@
-
-import os
 import logging
-import json
-import re
 from typing import Any
 
 from deepagents import create_deep_agent
-from langchain_openai import ChatOpenAI
+
+from src.agents.utils import create_openrouter_llm, parse_json_with_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -19,21 +16,13 @@ class ReflectionAgent:
         temperature: float = 0.0,
         api_key: str | None = None,
     ):
-        # Configure model manually to handle OpenRouter
-        if model.startswith("openrouter/"):
-            model_name = model.replace("openrouter/", "")
-            llm = ChatOpenAI(
-                model=model_name,
-                temperature=temperature,
-                base_url="https://openrouter.ai/api/v1",
-                api_key=api_key or os.getenv("OPENROUTER_API_KEY"),
-                default_headers={
-                    "HTTP-Referer": "https://github.com/htooayelwinict/bot",
-                    "X-Title": "ReflectionAgent",
-                },
-            )
-        else:
-            llm = model
+        # Configure model via shared utility
+        llm = create_openrouter_llm(
+            model=model,
+            temperature=temperature,
+            api_key=api_key,
+            app_title="ReflectionAgent",
+        )
 
         self.agent = create_deep_agent(
             model=llm,
@@ -55,10 +44,10 @@ Example: "browser_click(ref=e42) worked for privacy" is useful.
 
     async def analyze_trajectory(self, task: str, trajectory: list[dict], score: float) -> dict[str, Any]:
         """Analyze a trajectory and return a structured critique."""
-        
+
         # Format trajectory for the LLM
         log_str = self._format_trajectory(trajectory)
-        
+
         prompt = f"""ANALYZE THIS EXECUTION:
 
 TASK: {task}
@@ -85,10 +74,10 @@ Do NOT output markdown. Output RAW JSON only.
                 {"messages": [{"role": "user", "content": prompt}]},
                 config={"configurable": {"thread_id": "reflection"}},
             )
-            
+
             content = result["messages"][-1].content
             return self._parse_json(content)
-            
+
         except Exception as e:
             logger.error(f"Reflection failed: {e}")
             return {
@@ -100,7 +89,7 @@ Do NOT output markdown. Output RAW JSON only.
 
     def _format_trajectory(self, trajectory: list[dict]) -> str:
         """Format trajectory log for LLM analysis.
-        
+
         CRITICAL FIX: Preserves full input parameters (especially selectors/refs)
         to enable accurate failure pattern identification.
         """
@@ -117,24 +106,24 @@ Do NOT output markdown. Output RAW JSON only.
 
             # PRESERVE CRITICAL PARAMETERS (P1 FIX - no more 100 char truncation)
             args = event.get("input", {})
-            
+
             # Handle case where args is a string instead of dict
             if isinstance(args, str):
                 arg_summary = args[:500] + "..." if len(args) > 500 else args
             elif isinstance(args, dict):
                 # Extract key parameters that matter for failure analysis
                 key_params = {}
-                
+
                 # Always preserve: ref, element, url, text (critical for debugging)
                 for key in ["ref", "element", "url", "selector"]:
                     if key in args:
                         key_params[key] = args[key]
-                
+
                 # Preserve text but truncate very long content
                 if "text" in args:
                     text_val = args["text"]
                     key_params["text"] = text_val[:200] + "..." if len(str(text_val)) > 200 else text_val
-                
+
                 # For snapshots, just note they exist (don't dump the content)
                 if tool in ["get_snapshot", "snapshot", "browser_snapshot"]:
                     arg_summary = "(page snapshot captured)"
@@ -162,14 +151,11 @@ Do NOT output markdown. Output RAW JSON only.
         return "\n".join(formatted)
 
     def _parse_json(self, text: str) -> dict:
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
-            if match:
-                return json.loads(match.group(1))
-            return {
-                "critique": text, 
-                "successful_patterns": [], 
-                "failed_patterns": []
-            }
+        return parse_json_with_fallback(
+            text,
+            fallback={
+                "critique": text,
+                "successful_patterns": [],
+                "failed_patterns": [],
+            },
+        )
