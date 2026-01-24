@@ -48,7 +48,9 @@ Your goal is to analyze agent execution logs to identify:
 2. What went right (critical steps for success)
 3. Inefficiencies (needless steps)
 
-You must be critical and specific. "Tried X and failed" is better than "Failed."
+Be SPECIFIC. Include actual refs/selectors that worked or failed.
+Example: "browser_click(ref=e42) worked for privacy" is useful.
+"Clicking worked" is NOT useful.
 """
 
     async def analyze_trajectory(self, task: str, trajectory: list[dict], score: float) -> dict[str, Any]:
@@ -97,7 +99,11 @@ Do NOT output markdown. Output RAW JSON only.
             }
 
     def _format_trajectory(self, trajectory: list[dict]) -> str:
-        """Compact log format for LLM analysis."""
+        """Format trajectory log for LLM analysis.
+        
+        CRITICAL FIX: Preserves full input parameters (especially selectors/refs)
+        to enable accurate failure pattern identification.
+        """
         formatted = []
         for i, event in enumerate(trajectory, 1):
             # Handle both "tool_start" (from callback) and "tool_call" (legacy)
@@ -107,17 +113,51 @@ Do NOT output markdown. Output RAW JSON only.
 
             status = event.get("status", "unknown")
             tool = event.get("tool", "unknown")
+            success = event.get("success", status != "failed")
 
-            # Summarize arguments (avoid huge snapshots)
+            # PRESERVE CRITICAL PARAMETERS (P1 FIX - no more 100 char truncation)
             args = event.get("input", {})
-            arg_summary = str(args)[:100] + "..." if len(str(args)) > 100 else str(args)
+            
+            # Handle case where args is a string instead of dict
+            if isinstance(args, str):
+                arg_summary = args[:500] + "..." if len(args) > 500 else args
+            elif isinstance(args, dict):
+                # Extract key parameters that matter for failure analysis
+                key_params = {}
+                
+                # Always preserve: ref, element, url, text (critical for debugging)
+                for key in ["ref", "element", "url", "selector"]:
+                    if key in args:
+                        key_params[key] = args[key]
+                
+                # Preserve text but truncate very long content
+                if "text" in args:
+                    text_val = args["text"]
+                    key_params["text"] = text_val[:200] + "..." if len(str(text_val)) > 200 else text_val
+                
+                # For snapshots, just note they exist (don't dump the content)
+                if tool in ["get_snapshot", "snapshot", "browser_snapshot"]:
+                    arg_summary = "(page snapshot captured)"
+                elif key_params:
+                    # Format preserved parameters
+                    arg_summary = ", ".join([f'{k}="{v}"' for k, v in key_params.items()])
+                else:
+                    # Fallback: show full args but with 500 char limit (was 100)
+                    arg_summary = str(args)[:500] + "..." if len(str(args)) > 500 else str(args)
+            else:
+                # Fallback for other types
+                arg_summary = str(args)[:500] + "..." if len(str(args)) > 500 else str(args)
 
-            # Check for error output in the event if available
+            # Status markers for clear identification
+            status_marker = "✓" if success else "✗ FAILED"
             error_info = ""
-            if status == "failed":
-                error_info = " [FAILED]"
+            if not success:
+                error_output = event.get("output", event.get("error", ""))
+                if error_output:
+                    error_preview = str(error_output)[:150]
+                    error_info = f" | Error: {error_preview}"
 
-            formatted.append(f"{i}. {tool}({arg_summary}){error_info}")
+            formatted.append(f"{i}. [{status_marker}] {tool}({arg_summary}){error_info}")
 
         return "\n".join(formatted)
 

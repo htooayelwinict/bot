@@ -61,7 +61,7 @@ class PlanningAgent:
 
 When given historical successful workflows and a current task, you must:
 1. Identify key tool call sequences that led to success
-2. Highlight parameter patterns from successful executions
+2. Highlight parameter patterns from successful executions (especially refs and selectors)
 3. Note any error handling approaches used
 4. Provide specific, actionable steps
 
@@ -73,8 +73,8 @@ Be concise and focus on proven patterns that worked.
 ## Important Guidelines
 
 - Focus on the tool sequences and parameters that worked
-- Note any specific selectors or strategies used
-- Highlight error handling patterns
+- PRESERVE specific refs/selectors from successful workflows (e.g., ref="e42")
+- Note any failed patterns to AVOID
 - Keep steps actionable and specific
 """
 
@@ -130,11 +130,13 @@ Be concise and focus on proven patterns that worked.
         if not self.qdrant_client:
             self.qdrant_client = await QdrantManager.get_client()
 
-        # Retrieve similar workflows
+        # Retrieve similar workflows with quality filtering
         similar = await retrieve_similar_trajectories(
             task=task,
             top_k=top_k,
-            min_score=0.5,
+            min_score=0.4,  # Allow learning from lower-scored runs
+            min_similarity=0.4,  # Match same workflow across different topics
+            exclude_failed_patterns=True,  # P1 FIX: Deprioritize failed workflows
             client=self.qdrant_client,
         )
 
@@ -228,13 +230,10 @@ Structure:
         "2. Click on [element]...",
         "3. Type 'text' into..."
     ],
-    "similar_patterns": [
-        {{
-            "task": "Original task",
-            "score": 0.95,
-            "key_actions": ["navigate -> click -> type"]
-        }}
-    ]
+    "working_selectors": {{
+        "element_name": "selector or ref that worked"
+    }},
+    "avoid_patterns": ["patterns that failed"]
 }}
 """
 
@@ -260,42 +259,109 @@ Structure:
             }
 
     def _format_workflows(self, workflows: list[dict[str, Any]]) -> str:
-        """Format workflows for prompt injection."""
+        """Format workflows for prompt injection with full tool parameters.
+        
+        CRITICAL: Preserves input parameters (selectors, refs, text) for LLM consumption.
+        This enables the execution agent to reuse working selectors instead of trial-and-error.
+        """
         formatted = []
         for i, w in enumerate(workflows, 1):
             task = w.get("task", "Unknown")
             score = w.get("score", 0.0)
             
-            # Create a simplified tool sequence string
+            # Extract tool calls with FULL parameters (P0 FIX)
             tool_calls = w.get("tool_calls", [])
-            tools = [t.get("tool", "unknown").replace("browser_", "") for t in tool_calls]
             
-            # Collapse repeated tools (e.g. wait, wait, wait -> wait)
-            clean_tools = []
-            if tools:
-                clean_tools = [tools[0]]
-                for t in tools[1:]:
-                    if t != clean_tools[-1]:
-                        clean_tools.append(t)
+            # Extract working selectors from successful tool calls
+            working_selectors = []
+            detailed_steps = []
             
-            sequence = " -> ".join(clean_tools[:15])  # Limit length
-            if len(clean_tools) > 15:
-                sequence += f" -> ... ({len(clean_tools)-15} more)"
+            for j, tc in enumerate(tool_calls[:20], 1):  # Limit to 20 most relevant
+                # Handle case where tc might be a string instead of dict
+                if isinstance(tc, str):
+                    detailed_steps.append(f"{j}. {tc}")
+                    continue
+                if not isinstance(tc, dict):
+                    detailed_steps.append(f"{j}. {str(tc)}")
+                    continue
+                    
+                tool_name = tc.get("tool", "unknown").replace("browser_", "")
+                inputs = tc.get("input", {})
+                success = tc.get("success", True)
+                
+                # Handle case where inputs is a string instead of dict
+                if isinstance(inputs, str):
+                    status_marker = "✓" if success else "✗"
+                    detailed_steps.append(f"{j}. {status_marker} {tool_name}({inputs[:100]})")
+                    continue
+                if not isinstance(inputs, dict):
+                    detailed_steps.append(f"{j}. {tool_name}()")
+                    continue
+                
+                # Build detailed step with parameters
+                if inputs:
+                    # Extract key parameters for different tool types
+                    param_parts = []
+                    
+                    # Selector/ref (critical for click, type, etc.)
+                    if "ref" in inputs:
+                        param_parts.append(f'ref="{inputs["ref"]}"')
+                        if success:
+                            working_selectors.append({
+                                "tool": tool_name,
+                                "ref": inputs["ref"],
+                                "element": inputs.get("element", "unknown")
+                            })
+                    
+                    # URL for navigation
+                    if "url" in inputs:
+                        param_parts.append(f'url="{inputs["url"]}"')
+                    
+                    # Text content (truncate if long)
+                    if "text" in inputs:
+                        text_val = inputs.get("text", "")
+                        text_preview = str(text_val)[:50] + "..." if len(str(text_val)) > 50 else str(text_val)
+                        param_parts.append(f'text="{text_preview}"')
+                    
+                    # Element description
+                    if "element" in inputs:
+                        param_parts.append(f'element="{inputs["element"]}"')
+                    
+                    params_str = ", ".join(param_parts) if param_parts else "..."
+                    status_marker = "✓" if success else "✗"
+                    detailed_steps.append(f"{j}. {status_marker} {tool_name}({params_str})")
+                else:
+                    detailed_steps.append(f"{j}. {tool_name}()")
+            
+            # Format working selectors section
+            selectors_section = ""
+            if working_selectors:
+                selectors_section = "\n🎯 WORKING SELECTORS (reuse these):\n"
+                for sel in working_selectors[:10]:  # Top 10 selectors
+                    selectors_section += f"  - {sel['tool']}: ref=\"{sel['ref']}\" ({sel['element']})\n"
 
-            # Format reflection data
+            # Format reflection data with failed patterns
             reflection = w.get("reflection", {}) or {}
             critique = reflection.get("critique", "N/A")
             failed_patterns = reflection.get("failed_patterns", [])
+            successful_patterns = reflection.get("successful_patterns", [])
+            
             warnings = ""
             if failed_patterns:
-                warnings = "\n⚠️ AVOID REPEATING THESE MISTAKES:\n" + "\n".join([f"- {p}" for p in failed_patterns])
+                warnings = "\n⚠️ AVOID THESE FAILED PATTERNS:\n" + "\n".join([f"  - {p}" for p in failed_patterns[:5]])
+            
+            successes = ""
+            if successful_patterns:
+                successes = "\n✅ SUCCESSFUL PATTERNS:\n" + "\n".join([f"  - {p}" for p in successful_patterns[:5]])
 
             formatted.append(
-                f"WORKFLOW #{i}\n"
+                f"═══════════════════════════════════════════════════════\n"
+                f"WORKFLOW #{i} (Score: {score:.2f})\n"
+                f"═══════════════════════════════════════════════════════\n"
                 f"Task: {task}\n"
-                f"Score: {score:.2f}\n"
-                f"Tool Sequence: {sequence}\n"
-                f"LESSONS LEARNED: {critique}{warnings}\n"
+                f"{selectors_section}"
+                f"\n📋 DETAILED EXECUTION TRACE:\n" + "\n".join(detailed_steps) + "\n"
+                f"\n📝 LESSONS LEARNED: {critique}{successes}{warnings}\n"
             )
 
         return "\n".join(formatted)

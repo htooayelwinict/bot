@@ -1,7 +1,7 @@
 ---
 name: facebook-automation
 description: Facebook automation including posting with privacy settings, interactions, messaging, and navigation workflows
-allowed-tools: browser_navigate browser_click browser_type browser_fill_form browser_get_snapshot browser_screenshot browser_wait browser_navigate_back browser_get_page_info browser_hover browser_press_key browser_evaluate browser_scroll
+allowed-tools: browser_navigate browser_click browser_type browser_fill_form browser_get_snapshot browser_screenshot browser_wait browser_navigate_back browser_get_page_info browser_hover browser_press_key browser_evaluate browser_scroll write_todos
 ---
 
 # Facebook Automation Skill
@@ -14,9 +14,26 @@ Automation guide for Facebook web interface - posts, privacy settings, interacti
 - Interact with posts (like, comment, share)
 - Send messages via Messenger
 
+**If you received a Success Plan with `working_selectors`, try those patterns first.**
+
 ---
 
 ## Critical Rules
+
+### 🚫 NEVER USE browser_evaluate FOR CLICKING (CAUSES INFINITE LOOPS)
+
+**STOP! If you're about to use browser_evaluate to click, DON'T.**
+
+This is the #1 cause of agent failures. browser_evaluate for clicking:
+- Returns null (element not found in DOM)
+- Agent retries with different JS variations
+- Loops 25+ times, never works
+
+**If browser_evaluate returns null ONCE:**
+1. STOP immediately
+2. Call `browser_get_snapshot()`
+3. Use `browser_click(ref="eXX", force=True)` with ref from snapshot
+4. If element not in snapshot, the dialog may not have opened - see "Dialog Not Opening" below
 
 ### ⚠️ REFS BECOME STALE AFTER EVERY ACTION
 
@@ -46,37 +63,13 @@ browser_get_snapshot()  # GET FRESH REFS!
 browser_click(ref="e42", force=True)
 ```
 
-### 🚫 NEVER USE browser_evaluate FOR CLICKING
+### � DIALOG NOT OPENING?
 
-**CRITICAL**: `browser_evaluate` is for data extraction ONLY. Using it to click causes infinite loops.
-
-**WRONG (causes 25+ iteration loops):**
-```python
-# NEVER do this - it loops forever
-browser_evaluate("document.querySelector('button').click()")
-browser_evaluate("Array.from(document.querySelectorAll('button')).find(...)")
-```
-
-**CORRECT:**
-```python
-browser_get_snapshot()
-# Find: button "Friends" [ref=e42]
-browser_click(ref="e42", force=True)
-
-OR use selector
-browser_click(
-  "button=What",
-  "left",
-  false,
-  true
-)
-```
-
-**If browser_evaluate returns null:**
-- This means element not found
-- DO NOT try more JavaScript variations
-- Instead: `browser_get_snapshot()` and use ref from snapshot
-- Maximum 2 attempts with different strategies, then SKIP/REPORT
+If you clicked to open a dialog but snapshot doesn't show dialog elements:
+1. `browser_wait(time=2)` - give React time to render
+2. `browser_get_snapshot()` - check again
+3. If still no dialog, try clicking again with `force=True`
+4. If still fails after 2 attempts, report the issue
 
 ### 🔄 LOOP PREVENTION
 
@@ -146,6 +139,7 @@ browser_get_snapshot()  # REQUIRED after every action
 | Complete ALL dialog steps | Selecting ≠ confirming |
 | Verify with snapshot before "done" | Task isn't complete until verified |
 | **Read button names carefully** | "Close composer" ≠ privacy button! |
+| **Max 2 retries per approach** | If it fails twice, try different strategy |
 
 ---
 

@@ -43,9 +43,54 @@ async def store_trajectory(
             if client is None:
                 client = await QdrantManager.get_client()
 
-            # Create embedding from task only (for better retrieval similarity)
-            # We want to match similar TASKS, not similar execution traces
-            text_to_embed = task
+            # IMPROVED EMBEDDING STRATEGY (P1 FIX)
+            # Embed task + successful tool sequence for better pattern matching
+            # This enables matching on EXECUTION PATTERNS, not just task intent
+            
+            # Extract successful tool sequence
+            successful_tools = []
+            for tc in tool_calls:
+                # Handle case where tc might be a string instead of dict
+                if isinstance(tc, str):
+                    successful_tools.append(tc)
+                    continue
+                if not isinstance(tc, dict):
+                    continue
+                    
+                if tc.get("success", True):  # Include successful calls
+                    tool_name = tc.get("tool", "")
+                    inputs = tc.get("input", {})
+                    
+                    # Handle case where inputs is a string
+                    if isinstance(inputs, str):
+                        successful_tools.append(tool_name)
+                        continue
+                    if not isinstance(inputs, dict):
+                        successful_tools.append(tool_name)
+                        continue
+                    
+                    # Include key context for certain tools
+                    if tool_name in ["browser_navigate", "navigate"]:
+                        url = inputs.get("url", "")
+                        if url:
+                            # Extract domain for pattern matching
+                            domain = url.split("//")[-1].split("/")[0]
+                            successful_tools.append(f"{tool_name}({domain})")
+                        else:
+                            successful_tools.append(tool_name)
+                    elif tool_name in ["browser_click", "click", "browser_type", "type"]:
+                        element = inputs.get("element", "")
+                        if element:
+                            successful_tools.append(f"{tool_name}({element[:30]})")
+                        else:
+                            successful_tools.append(tool_name)
+                    else:
+                        successful_tools.append(tool_name)
+            
+            # Combine task with tool sequence (limit to key tools)
+            tool_sequence = " -> ".join(successful_tools[:15])
+            text_to_embed = f"{task} | Execution: {tool_sequence}" if tool_sequence else task
+            
             embedding = await embed_trajectory(text_to_embed)
 
             # Generate unique point ID (UUID v4 for uniqueness)

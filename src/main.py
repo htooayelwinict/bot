@@ -466,7 +466,9 @@ def run(task: str | None, stream: bool, debug: bool, thread: str, model: str, no
         # Initialize session (restore existing) and run within context
         async with async_init_session(login=False):
             # Create agent
-            click.echo(f"\nInitializing agent with {model}...")
+            # Display actual model name (strip openrouter/ prefix for clarity)
+            display_model = model.replace("openrouter/", "")
+            click.echo(f"\nInitializing agent with {display_model}...")
             agent = FacebookSurferAgent(
                 model=model,
                 enable_metrics=enable_metrics,

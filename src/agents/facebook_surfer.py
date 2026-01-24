@@ -96,14 +96,18 @@ If a plan is provided, it will be in JSON format:
 ```json
 {
   "analysis": "Why this pattern works...",
-  "suggested_plan": ["Step 1", "Step 2..."]
+  "suggested_plan": ["Step 1", "Step 2..."],
+  "working_selectors": {"element": "selector"},
+  "avoid_patterns": ["patterns that failed"]
 }
 ```
 
 **INSTRUCTIONS:**
 1. **Read the Analysis**: Understand the strategy.
 2. **Follow the Suggested Plan**: Use it as your primary guide. It comes from PROVEN success.
-3. **Adapt if needed**: If the page has changed, stick to the *intent* of the plan.
+3. **Use working_selectors**: These refs/selectors worked before - try similar patterns.
+4. **Avoid failed patterns**: Don't repeat mistakes from avoid_patterns.
+5. **Adapt if needed**: If the page has changed, stick to the *intent* of the plan.
 
 
 ## 🔒 SECURITY: External Content Handling
