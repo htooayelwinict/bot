@@ -167,10 +167,15 @@ class PlanningAgent:
         planning_message = self._build_planning_message(task, historical_context)
 
         try:
-            # Invoke DeepAgent with planning task
-            result = await self.agent.ainvoke(
-                {"messages": [{"role": "user", "content": planning_message}]},
-                config={"configurable": {"thread_id": "planning"}},
+            # Invoke DeepAgent with planning task (with timeout)
+            import asyncio
+            
+            result = await asyncio.wait_for(
+                self.agent.ainvoke(
+                    {"messages": [{"role": "user", "content": planning_message}]},
+                    config={"configurable": {"thread_id": "planning"}},
+                ),
+                timeout=45.0  # 45 second timeout for planning
             )
 
             # Extract plan from result

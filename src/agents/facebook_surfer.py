@@ -275,12 +275,29 @@ browser_get_snapshot()  # REQUIRED - all previous refs are stale
 ❌ **Repeating failed patterns** - If same action fails 2x, try different approach (DON'T retry 25+ times)
 ❌ **INFINITE LOOPS on selectors** - If a selector returns None/empty 3 times: STOP, log "Selector failed", try alternative or abort
 
+## 🛑 LOOP PREVENTION (AUTO-ABORT ENABLED)
+The system has **runtime loop detection** that will ABORT execution if:
+- Same tool returns empty/useless results 4+ times in a row
+- Same tool is called 6+ times consecutively  
+- Identical tool calls with same inputs repeat 5+ times
+
+**When you get empty results (None, [], {}):**
+1. Try ONCE with alternative selector/approach
+2. If still empty → Try browser_get_text() or snapshot inspection instead
+3. If STILL empty → **STOP and report**: "Unable to extract data with available methods. Task cannot be completed."
+4. DO NOT retry the same failing selector 10+ times
+
+**When stuck:**
+- Explain what's failing clearly
+- Suggest what alternative you'll try next
+- If no alternatives work → Report limitation and abort gracefully
+
 ## LOOP-BREAKING RULES (CRITICAL)
-- **Max retries per selector**: 3 attempts
+- **Max retries per selector**: 3 attempts max
 - **If selector returns empty**: Try 1 alternative, then give up
 - **If same tool fails 3x**: Change strategy immediately - don't retry same action
 - **Monitor your own calls**: If you see the same tool call repeated 5+ times = STOP and try different approach
-- **On repeated failures**: Scroll more, use different selector, or conclude "posts not found on this profile"
+- **On repeated failures**: Scroll more, use different selector, or conclude "data not accessible with current tools"
 
 ## SKILLS CONTEXT
 When you receive a SKILL file, it provides:
@@ -406,6 +423,36 @@ Execute this task following the success plan above."""
                 config=config,
             )
         except Exception as e:
+            # Check if this is a runtime loop detection from callback
+            if "infinite loop detected" in str(e).lower():
+                logger.error(
+                    f"❌ INFINITE LOOP DETECTED BY RUNTIME GUARD\n"
+                    f"   Task: {task[:100]}...\n"
+                    f"   Error: {e}"
+                )
+                
+                # Store failure in RAG with loop metadata
+                if metrics_callback is not None and self.metrics_middleware is not None:
+                    logger.info("📝 Storing loop failure trajectory for RAG learning...")
+                    try:
+                        trajectory_data = metrics_callback.get_trajectory()
+                        metrics_result = await self.metrics_middleware.process_execution(
+                            task=task,
+                            trajectory_data={"trajectory": trajectory_data},
+                            callback=metrics_callback,
+                        )
+                        
+                        if metrics_result.get("stored"):
+                            logger.info("✅ Loop failure stored in RAG")
+                        else:
+                            logger.warning(f"⚠️  Failed to store loop trajectory: {metrics_result.get('rejection_reason')}")
+                    except Exception as store_error:
+                        logger.warning(f"Failed to store loop trajectory: {store_error}")
+                
+                raise RuntimeError(
+                    f"Agent stuck in infinite loop. Runtime guard aborted execution after detecting:\n{e}"
+                ) from e
+            
             # Check if this is a max_iterations exceeded error
             if "max_iterations" in str(e).lower() or "recursion" in str(e).lower():
                 logger.error(
