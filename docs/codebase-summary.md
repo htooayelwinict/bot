@@ -6,9 +6,23 @@
 src/
 ├── agents/
 │   ├── __init__.py
-│   └── facebook_surfer.py      # DeepAgents integration
+│   ├── facebook_surfer.py      # DeepAgents integration
+│   ├── planner.py              # RAG-based workflow planning agent
+│   ├── reflection.py           # Trajectory analysis agent
+│   └── utils.py                # Shared utilities (LLM, JSON parsing)
 ├── session/
 │   └── __init__.py              # Facebook session management
+├── tools/
+├── metrics/
+│   ├── trajectory_callback.py  # LangChain callback for trajectory capture
+│   ├── scoring.py              # Multi-dimensional trajectory scoring
+│   ├── pii_redaction.py        # PII redaction before storage
+│   └── models.py               # Pydantic models for metrics
+├── storage/
+│   ├── trajectory_store.py     # Qdrant vector storage
+│   ├── embeddings.py           # OpenAI embedding wrappers
+│   ├── retrieval.py            # Semantic similarity search
+│   └── qdrant_client.py        # Qdrant client manager
 ├── tools/
 │   ├── __init__.py
 │   ├── base.py                  # Base tool class with global context
@@ -26,9 +40,16 @@ src/
 ├── facebook_post_tools.py       # Facebook-specific tools
 └── facebook_post_onlyme.py      # "Only me" posting script
 
-tests/                            # 10 test files
+tests/                            # Test files
 ├── test_facebook_surfer.py      # Agent tests
-└── test_interaction_tools.py    # Tool tests
+├── test_interaction_tools.py    # Tool tests
+├── metrics/                      # Metrics tests
+└── storage/                      # Storage tests
+
+qdrant_db/                        # Local Qdrant storage (gitignored)
+
+scripts/                          # Utility scripts
+└── seed_trajectories.py          # Cold start seeding
 
 skills/
 └── facebook-automation/
@@ -50,6 +71,13 @@ config/
 | [`src/tools/base.py`](src/tools/base.py) | BaseTool with global session/page context |
 | [`src/tools/security.py`](src/tools/security.py) | Prompt injection defense (wrap_untrusted, detect, sanitize) |
 | [`src/agents/facebook_surfer.py`](src/agents/facebook_surfer.py) | DeepAgents + LangGraph agent with skills middleware |
+| [`src/agents/planner.py`](src/agents/planner.py) | RAG-based workflow planning agent |
+| [`src/agents/reflection.py`](src/agents/reflection.py) | Trajectory analysis for patterns |
+| [`src/agents/utils.py`](src/agents/utils.py) | Shared LLM and JSON utilities |
+| [`src/metrics/trajectory_callback.py`](src/metrics/trajectory_callback.py) | LangChain callback for trajectory capture |
+| [`src/metrics/scoring.py`](src/metrics/scoring.py) | Multi-dimensional trajectory scoring |
+| [`src/storage/trajectory_store.py`](src/storage/trajectory_store.py) | Qdrant vector storage |
+| [`src/storage/retrieval.py`](src/storage/retrieval.py) | Semantic similarity search |
 | [`src/main.py`](src/main.py) | Click CLI: login, run, test commands |
 | [`pyproject.toml`](pyproject.toml) | Dependencies, extras (agent, dev, memory) |
 
@@ -105,3 +133,20 @@ Registered tools (22 total):
 | `--debug` | Full event streaming (nodes, tools, LLM) |
 | `--model` | Model selection (default: `openrouter/mistralai/devstral-2512:free`) |
 | `--thread` | Conversation thread ID for memory |
+| `--enable-metrics` | Capture trajectory and store in Qdrant |
+| `--enable-planning` | Retrieve similar workflows and inject plan |
+
+## Learning & Planning System
+
+**Trajectory Capture** (`--enable-metrics`):
+- `TrajectoryCallbackHandler` intercepts all tool calls
+- Records timing, success/failure, token usage
+- Calculates weighted score (40% tool success, 20% latency, 20% tokens, 20% outcome)
+- PII redaction before storage
+
+**RAG-Based Planning** (`--enable-planning`):
+- Retrieves top-k similar workflows via semantic search
+- `PlanningAgent` generates success plan from patterns
+- Plan injected into agent context
+
+Requires `OPENAI_API_KEY` for embeddings and planning.

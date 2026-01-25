@@ -2,51 +2,76 @@
 
 ## Overview
 
-Facebook Surfer is an AI-powered Facebook automation agent built on a modern agentic AI stack combining **DeepAgents**, **LangChain**, and **LangGraph** with Playwright browser automation.
+Facebook Surfer is an AI-powered Facebook automation agent built on a modern agentic AI stack combining **DeepAgents**, **LangChain**, and **LangGraph** with Playwright browser automation and adaptive learning via RAG-based trajectory storage.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        User CLI                             │
-│  (login / run [--stream] [--debug] [--thread] [--model])   │
-└────────────────────┬────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│                  FacebookSurferAgent                        │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  DeepAgents + LangGraph Runtime                      │  │
-│  │  - create_deep_agent() factory function              │  │
-│  │  - MemorySaver (LangGraph checkpointer)              │  │
-│  │  - InMemoryStore (context persistence)               │  │
-│  │  - SkillsMiddleware (domain guidance)                │  │
-│  └──────────────────────────────────────────────────────┘  │
-└────────────────────┬────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│              LangChain StructuredTool Registry              │
-│  (auto-discovers all tools from src/tools/ modules)        │
-│  - Pydantic validation for all tool arguments              │
-│  - Async/sync detection for proper tool binding            │
-└────────────────────┬────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│              Global Session Context                          │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  FacebookSessionManager                              │  │
-│  │  - Persistent context in ./profiles/facebook/        │  │
-│  │  - HITL login with 3-minute timeout                  │  │
-│  │  - Cookie/storage state persistence                  │  │
-│  │  - SingletonLock cleanup                             │  │
-│  └──────────────────────────────────────────────────────┘  │
-└────────────────────┬────────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    Playwright                                │
-│  (Chromium browser with stealth args)                       │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                              User CLI                                   │
+│  (login / run [--stream] [--debug] [--enable-metrics] [--enable-planning]) │
+└──────────────────────────┬──────────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     Optional: Planning Agent                            │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │  PlanningAgent (if --enable-planning)                            │  │
+│  │  - Retrieve similar workflows from Qdrant                        │  │
+│  │  - Generate success plan with guardrails                         │  │
+│  │  - Inject plan into execution context                            │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────┬──────────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     FacebookSurferAgent                                 │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │  DeepAgents + LangGraph Runtime                                   │  │
+│  │  - create_deep_agent() factory function                           │  │
+│  │  - MemorySaver (LangGraph checkpointer)                           │  │
+│  │  - InMemoryStore (context persistence)                            │  │
+│  │  - SkillsMiddleware (domain guidance)                             │  │
+│  │  - TrajectoryCallback (if --enable-metrics)                       │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────┬──────────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                  LangChain StructuredTool Registry                      │
+│  (auto-discovers all tools from src/tools/ modules)                    │
+│  - Pydantic validation for all tool arguments                          │
+│  - Async/sync detection for proper tool binding                        │
+└──────────────────────────┬──────────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                   Global Session Context                                │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │  FacebookSessionManager                                           │  │
+│  │  - Persistent context in ./profiles/facebook/                     │  │
+│  │  - HITL login with 3-minute timeout                               │  │
+│  │  - Cookie/storage state persistence                               │  │
+│  │  - SingletonLock cleanup                                          │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────┬──────────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         Playwright                                      │
+│              (Chromium browser with stealth args)                       │
+└─────────────────────────────────────────────────────────────────────────┘
+                           │
+                           │ (after execution)
+                           ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│              Learning System (if --enable-metrics)                      │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │  1. TrajectoryCallback captures all tool calls                   │  │
+│  │  2. Scoring: 40% success, 20% latency, 20% tokens, 20% outcome  │  │
+│  │  3. PII Redaction (emails, phones, SSN, API keys)                │  │
+│  │  4. Qdrant Storage with OpenAI embeddings                       │  │
+│  │  5. ReflectionAgent analyzes patterns                            │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -269,12 +294,19 @@ User Task → CLI → async_init_session()
                   ▼
               set_global_session(session)
                   │
+                  ├─── 🔄 IF --enable-planning:
+                  │      PlanningAgent.craft_success_plan()
+                  │        ├─── Qdrant: retrieve_similar_trajectories()
+                  │        ├─── LLM: generate structured plan
+                  │        └─── Inject plan into agent context
+                  │
                   ▼
               FacebookSurferAgent(model, ...)
                   │
                   ├─── 📋 register_all_tools() → ToolRegistry
                   ├─── 🧠 MemorySaver + InMemoryStore
-                  └─── 📚 SkillsMiddleware → load SKILL.md
+                  ├─── 📚 SkillsMiddleware → load SKILL.md
+                  └─── 📊 TrajectoryCallback (if --enable-metrics)
                   │
                   ▼
               agent.invoke(task, thread_id)
@@ -293,6 +325,14 @@ User Task → CLI → async_init_session()
              │     or                             │
              │  5. Task complete → END            │
              └────────────────────────────────────┘
+                  │
+                  ├─── 📊 IF --enable-metrics:
+                  │      TrajectoryCallback.on_tool_end()
+                  │        ├─── Capture: tool, input, output, timing
+                  │        ├─── Score trajectory (40/20/20/20)
+                  │        ├─── PII redaction
+                  │        ├─── Qdrant: store_trajectory()
+                  │        └─── ReflectionAgent: analyze patterns
                   │
                   ▼
               Final Response (verified by snapshot)
@@ -372,4 +412,82 @@ agent = [
     "langgraph>=0.2.0",       # Stateful agent graphs
     "openai>=1.54.0",         # API client
 ]
+memory = [
+    "qdrant-client>=1.12.0",  # Vector database
+]
 ```
+
+---
+
+## Learning & Planning System
+
+### Overview
+
+The agent learns from past executions via trajectory capture, scoring, and RAG-based planning:
+
+```
+Task → PlanningAgent (if enabled) → ExecutionAgent → TrajectoryCallback
+                                             ↓
+                                    Scoring → PII Redaction → Qdrant Storage
+                                                                        ↓
+                                                    Semantic Retrieval for Future Tasks
+```
+
+### Components
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| **Trajectory Capture** | [`src/metrics/trajectory_callback.py`](../src/metrics/trajectory_callback.py) | LangChain callback that records all tool calls |
+| **Scoring** | [`src/metrics/scoring.py`](../src/metrics/scoring.py) | Multi-dimensional scoring (40/20/20/20) |
+| **PII Redaction** | [`src/metrics/pii_redaction.py`](../src/metrics/pii_redaction.py) | Removes emails, phones, SSN, API keys |
+| **Qdrant Storage** | [`src/storage/trajectory_store.py`](../src/storage/trajectory_store.py) | Vector DB with OpenAI embeddings |
+| **Planning Agent** | [`src/agents/planner.py`](../src/agents/planner.py) | Generates plans from similar workflows |
+| **Reflection Agent** | [`src/agents/reflection.py`](../src/agents/reflection.py) | Analyzes trajectories for patterns |
+
+### Data Flow
+
+1. **Execution** with `--enable-metrics`:
+   - `TrajectoryCallbackHandler` intercepts all tool calls
+   - Records: tool name, input, output, success/failure, latency, tokens
+   - Thread-safe storage
+
+2. **Scoring** (weighted formula):
+   ```
+   score = 0.4 * tool_success_rate
+         + 0.2 * (30s / actual_latency)
+         + 0.2 * (5000 / actual_tokens)
+         + 0.5 * outcome_match
+   ```
+
+3. **PII Redaction** (before embedding):
+   - Emails, phones, SSN, credit cards, API keys
+   - Security critical: applied BEFORE embeddings
+
+4. **Qdrant Storage**:
+   - Local persistent storage in `./qdrant_db/`
+   - OpenAI `text-embedding-3-small` embeddings
+   - Cosine similarity search
+
+5. **RAG-Based Planning** (`--enable-planning`):
+   - Retrieves top-3 similar workflows
+   - `PlanningAgent` generates structured plan:
+     ```json
+     {
+       "analysis": "...",
+       "suggested_plan": ["1. ...", "2. ..."],
+       "working_selectors": {"element": "text/aria cue"},
+       "avoid_patterns": ["pattern that failed"],
+       "guardrails": ["fail >3x -> switch strategy"]
+     }
+     ```
+   - Plan injected into agent context
+
+### CLI Flags
+
+| Flag | Purpose |
+|------|---------|
+| `--enable-metrics` | Capture and store trajectories |
+| `--enable-planning` | Retrieve similar workflows and generate plan |
+| `--enable-metrics --enable-planning` | Full learning loop (plan + store) |
+
+Requires `OPENAI_API_KEY` in `config/.env`.

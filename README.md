@@ -106,6 +106,8 @@ For details, see [plan/agent-metrics-rag-learning-20260123-003053/README.md](pla
   - `security.py` - Prompt injection defense for untrusted browser content
 - `src/agents/` - DeepAgents integration with skills middleware
   - `planner.py` - RAG-based planning agent
+  - `reflection.py` - Trajectory pattern analysis
+  - `utils.py` - Shared LLM/JSON utilities
 - `src/metrics/` - Trajectory capture, scoring, and PII redaction
 - `src/storage/` - Qdrant vector database for semantic retrieval
 - `skills/` - Domain-specific guidance for workflows
