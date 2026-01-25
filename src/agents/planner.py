@@ -55,31 +55,29 @@ class PlanningAgent:
 
     def _build_system_prompt(self) -> str:
         """Build system prompt for workflow planning."""
-        return """You are a workflow planning expert. Your job is to analyze successful historical workflows and create step-by-step execution plans for new tasks.
+        return """You are a workflow planning expert. Your job is to analyze historical workflows and create deterministic, verified execution plans.
 
-## Your Role
+    ## Your Role
 
-When given historical successful workflows and a current task, you must:
-1. Identify key tool call sequences that led to success
-2. Highlight parameter patterns from successful executions (especially refs and selectors)
-3. Note any error handling approaches used
-4. Provide specific, actionable steps
+    Given historical workflows and a current task, you must:
+    1) Extract the key tool sequences that succeeded (order + parameters).
+    2) Elevate failed patterns into hard constraints to avoid.
+    3) Propose concrete, verifiable steps with checkpoints.
+    4) Include guardrails to prevent loops and premature success claims.
 
-## Output Format
+    ## Output Format
 
-Always output your plan as a numbered list of clear, actionable steps.
-Be concise and focus on proven patterns that worked.
+    Respond with a numbered list of concise, actionable steps plus supporting JSON fields (analysis, suggested_plan, working_selectors, avoid_patterns).
 
-## Important Guidelines
+    ## Important Guidelines
 
-- Focus on the tool sequences and parameters that worked
-- FIX: DO NOT preserve refs - they become stale across sessions (Facebook uses dynamic refs)
-- TOGGLE: Uncomment below to enable ref preservation (may cause stale ref issues)
-# - PRESERVE specific refs/selectors from successful workflows (e.g., ref="e42")
-- Preserve ELEMENT NAMES and PATTERNS instead (e.g., "Your profile button", "privacy menu")
-- Note any failed patterns to AVOID
-- Keep steps actionable and specific
-"""
+    - DO NOT preserve stale refs; preserve element descriptions/text cues instead (e.g., "profile menu button", "search box", "Posts tab").
+    - Treat avoid_patterns as MUST NOT actions; propose alternative selectors/paths when they conflict with the goal.
+    - Include verification gates: confirm you are on the correct page/view, confirm author/ownership when extracting posts, deduplicate items, and only mark done after printing outputs.
+    - Add loop/quality guardrails: if a selector/tool fails >3 times, switch strategy; prefer search/navigation over repeated scroll/evaluate on the wrong page.
+    - Call out working element cues (text, aria-label, visible labels) and URL targets from successful runs; prefer semantic cues over brittle indices/refs.
+    - Keep steps specific, ordered, and minimal; every step should have an observable success condition.
+    """
 
     def _create_agent(self):
         """Create the DeepAgent instance for planning."""
@@ -139,7 +137,7 @@ Be concise and focus on proven patterns that worked.
             top_k=top_k,
             min_score=0.47,  # Filter to higher-quality runs
             min_similarity=0.47,  # Match same workflow across different topics
-            exclude_failed_patterns=True,  # P1 FIX: Deprioritize failed workflows
+            exclude_failed_patterns=False,  # Include failures so avoid_patterns are surfaced
             client=self.qdrant_client,
         )
 
@@ -219,9 +217,11 @@ SIMILAR HISTORICAL WORKFLOWS (RAG Context):
 {historical_context}
 
 INSTRUCTIONS:
-1. Analyze the historical workflows to identify the winning pattern.
-2. Extract the key sequence of actions (navigate, click, type, etc).
-3. Create a step-by-step plan for the agent.
+1. Analyze the historical workflows to identify the winning pattern AND the patterns to avoid.
+2. Extract the key sequence of actions (navigate, click, type, etc) with parameters/element cues that worked.
+3. Create a step-by-step plan with verification checkpoints and fallback strategies.
+4. Enforce avoid_patterns as MUST NOT actions; propose alternates when conflicts arise.
+5. Add loop/quality guardrails: if a selector/tool fails >3 times, switch strategy and re-verify page state.
 
 OUTPUT FORMAT:
 You MUST respond with a raw JSON object only. Do NOT use markdown code blocks.
@@ -229,14 +229,16 @@ Structure:
 {{
     "analysis": "Specific analysis of what tools worked",
     "suggested_plan": [
-        "1. Navigate to...",
-        "2. Click on [element]...",
-        "3. Type 'text' into..."
+        "1. Navigate to... (include success condition)",
+        "2. Click on [element cue]...",
+        "3. Type 'text' into...",
+        "4. Verify page state/output before proceeding"
     ],
     "working_selectors": {{
-        "element_name": "selector or ref that worked"
+        "element_or_action": "text/aria label or URL cue that worked"
     }},
-    "avoid_patterns": ["patterns that failed"]
+    "avoid_patterns": ["patterns that failed"],
+    "guardrails": ["fail >3 times -> change selector and re-verify", "confirm author/ownership before collecting posts", "dedupe outputs before marking done"]
 }}
 """
 
@@ -314,10 +316,20 @@ Structure:
                     # Element description (preserved instead of ref)
                     if "element" in inputs:
                         param_parts.append(f'element="{inputs["element"]}"')
+                        if success:
+                            working_selectors.append({
+                                "tool": tool_name,
+                                "cue": inputs["element"]
+                            })
 
                     # URL for navigation
                     if "url" in inputs:
                         param_parts.append(f'url="{inputs["url"]}"')
+                        if success:
+                            working_selectors.append({
+                                "tool": tool_name,
+                                "cue": inputs["url"]
+                            })
 
                     # Text content (truncate if long)
                     if "text" in inputs:
@@ -334,9 +346,9 @@ Structure:
             # Format working selectors section
             selectors_section = ""
             if working_selectors:
-                selectors_section = "\n🎯 WORKING SELECTORS (reuse these):\n"
-                for sel in working_selectors[:10]:  # Top 10 selectors
-                    selectors_section += f"  - {sel['tool']}: ref=\"{sel['ref']}\" ({sel['element']})\n"
+                selectors_section = "\n🎯 WORKING CUES TO REUSE (text/aria/url, not refs):\n"
+                for sel in working_selectors[:10]:  # Top 10 cues
+                    selectors_section += f"  - {sel['tool']}: {sel['cue']}\n"
 
             # Format reflection data with failed patterns
             reflection = w.get("reflection", {}) or {}
