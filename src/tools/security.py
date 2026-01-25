@@ -65,14 +65,30 @@ ZERO_WIDTH_CHARS = [
     '\uffa0',  # Halfwidth hangul filler
 ]
 
+# Additional Unicode smuggling vectors (comprehensive coverage)
+_UNICODE_SMUGGLING_PATTERNS = [
+    r'[\U000E0000-\U000E007F]',  # Unicode Tags - Language tag smuggling
+    r'[\uFE00-\uFE0F]',           # Variation Selectors (Standard) - Invisible modifiers
+    r'[\U000E0100-\U000E01EF]',   # Variation Selectors (Extended) - Extended invisible modifiers
+    r'[\u202A-\u202E]',           # Directional Formatting - Bidi overrides
+]
+
 # Pre-compile regex for stripping zero-width chars (fast)
 _zero_width_pattern = re.compile('[' + ''.join(ZERO_WIDTH_CHARS) + ']')
+
+# Pre-compile comprehensive Unicode smuggling patterns
+_smuggling_pattern = re.compile('|'.join(_UNICODE_SMUGGLING_PATTERNS))
 
 
 def strip_zero_width(content: str) -> str:
     """Remove zero-width and invisible Unicode characters.
 
     Prevents obfuscation attacks like: I​G​N​O​R​E (with zero-width spaces)
+
+    Now also covers:
+    - Unicode Tags (U+E0000-E007F) - Language tag smuggling
+    - Variation Selectors (U+FE00-FE0F, U+E0100-E01EF) - Invisible modifiers
+    - Directional Formatting (U+202A-E) - Bidi overrides
 
     Args:
         content: Raw content
@@ -82,7 +98,11 @@ def strip_zero_width(content: str) -> str:
     """
     if not content:
         return content
-    return _zero_width_pattern.sub('', content)
+    # Remove traditional zero-width chars
+    result = _zero_width_pattern.sub('', content)
+    # Remove additional Unicode smuggling vectors
+    result = _smuggling_pattern.sub('', result)
+    return result
 
 
 def has_injection_markers(content: str) -> bool:
@@ -142,6 +162,13 @@ def detect_injection_patterns(content: str) -> list[str]:
 def sanitize_content(content: str, replacement: str = "[FILTERED]") -> str:
     """Remove known injection patterns and zero-width characters from content.
 
+    Comprehensive filter covering:
+    - Zero-width characters (U+200B-D, U+FEFF, etc.)
+    - Unicode Tags (U+E0000-E007F) - Language tag smuggling
+    - Variation Selectors (U+FE00-FE0F, U+E0100-E01EF) - Invisible modifiers
+    - Directional Formatting (U+202A-E) - Bidi overrides
+    - Injection patterns (SYSTEM:, IGNORE PREVIOUS, etc.)
+
     Lightweight filter - O(n) where n is content length.
     Does NOT guarantee safety, just removes obvious attacks.
 
@@ -155,7 +182,7 @@ def sanitize_content(content: str, replacement: str = "[FILTERED]") -> str:
     if not content:
         return content
 
-    # First strip zero-width characters
+    # First strip zero-width characters (now includes Unicode smuggling vectors)
     result = strip_zero_width(content)
 
     # Then remove injection patterns
@@ -202,20 +229,23 @@ def wrap_untrusted(
 def wrap_and_check(
     content: str,
     label: str = "PAGE_DATA",
-    log_injections: bool = True
+    log_injections: bool = True,
+    sanitize: bool = True
 ) -> tuple[str, bool]:
     """Wrap content and check for injection patterns.
 
-    Convenience function combining wrapping with detection.
+    Now sanitizes content before wrapping to prevent Unicode smuggling attacks.
 
     Args:
         content: Untrusted content
         label: Content type label
         log_injections: Whether to log detected patterns
+        sanitize: Whether to sanitize content (remove injection patterns) before wrapping
 
     Returns:
         (wrapped_content, has_suspicious_patterns)
     """
+    # First, check for injection patterns in original content
     suspicious = has_injection_markers(content)
 
     if suspicious and log_injections:
@@ -225,7 +255,10 @@ def wrap_and_check(
             file=sys.stderr
         )
 
-    wrapped = wrap_untrusted(content, label)
+    # Sanitize content if enabled (default: True)
+    content_to_wrap = sanitize_content(content) if sanitize else content
+
+    wrapped = wrap_untrusted(content_to_wrap, label)
     return wrapped, suspicious
 
 
@@ -242,4 +275,5 @@ __all__ = [
     "strip_zero_width",
     "INJECTION_PATTERNS",
     "ZERO_WIDTH_CHARS",
+    "_UNICODE_SMUGGLING_PATTERNS",
 ]
