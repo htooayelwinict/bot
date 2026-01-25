@@ -25,6 +25,55 @@ cp config/.env.example config/.env
 .venv/bin/python -m facebook-surfer run
 ```
 
+## Usage Examples
+
+Based on real tasks from the learning database:
+
+### Facebook Posts
+```bash
+# Create "Only Me" post about a topic
+.venv/bin/python -m facebook-surfer run "create an onlyme facebook post about AI"
+
+# Create post with specific content
+.venv/bin/python -m facebook-surfer run "create an onlyme facebook post about dogs"
+```
+
+### Profile & Content Scraping
+```bash
+# Extract recent posts from your profile
+.venv/bin/python -m facebook-surfer run "go to facebook and my user profile. grab 10 recent posts"
+
+# Scrape posts by specific person
+.venv/bin/python -m facebook-surfer run "go to facebook and my user profile. grab 10 recent posts by [Name]"
+```
+
+### Messaging
+```bash
+# Send message to specific person
+.venv/bin/python -m facebook-surfer run "send a message to John Doe; message - Hey, how are you?"
+
+# Send greeting to recent contact
+.venv/bin/python -m facebook-surfer run "send a greeting message to [Name] in recent message"
+```
+
+### Message Analysis
+```bash
+# Analyze conversation with specific person
+.venv/bin/python -m facebook-surfer run "facebook messages; read and analyze the recent convo with [Name]"
+
+# Get important insights from conversations
+.venv/bin/python -m facebook-surfer run "facebook messages; analyze and tell me about important things"
+```
+
+### News Scraping
+```bash
+# Scrape latest news from CNN
+.venv/bin/python -m facebook-surfer run "go to CNN news and scrape latest breaking news; draft into interesting style snap news"
+
+# Scrape from other news sources
+.venv/bin/python -m facebook-surfer run "go to BBC news and scrape breaking news; draft into interesting summary"
+```
+
 ## Learning & Planning
 
 The agent can learn from past executions to improve future performance:
