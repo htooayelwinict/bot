@@ -178,6 +178,15 @@ def test_browser_click_with_valid_ref(page_mock):
     assert result["success"] is True
 ```
 
+### Test Organization
+
+| Location | Tests |
+|----------|-------|
+| `tests/test_facebook_surfer.py` | Agent integration tests |
+| `tests/test_interaction_tools.py` | Tool tests |
+| `tests/metrics/` | Trajectory capture, scoring, PII redaction |
+| `tests/storage/` | Qdrant storage, retrieval tests |
+
 ## Commands
 
 | Command | Purpose |
