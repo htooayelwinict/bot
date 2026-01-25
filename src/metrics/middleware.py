@@ -89,6 +89,13 @@ class MetricsMiddleware:
             ... )
         """
         try:
+            # Note: Runtime loop detection now happens in callback's on_tool_end
+            # This is a backup check for edge cases
+            if callback._loop_detected:
+                logger.warning(
+                    "⚠️  Loop was detected during execution. Processing for RAG storage..."
+                )
+            
             # 1. Calculate score
             metrics = callback.get_metrics()
             score_result = calculate_score(
@@ -118,9 +125,9 @@ class MetricsMiddleware:
                 }
 
             # 3. Summarize trajectory for embedding
-            # Extract tool calls from trajectory data
+            # Extract tool calls from trajectory data (trajectory_data is a list)
             tool_calls = self._extract_tool_calls(trajectory_data)
-            logger.info(f"🔍 Extracted {len(tool_calls)} tool calls from {len(trajectory_data.get('trajectory', []))} trajectory events")
+            logger.info(f"🔍 Extracted {len(tool_calls)} tool calls from {len(trajectory_data)} trajectory events")
 
             summary = summarize_trajectory(
                 task=task,
@@ -133,12 +140,18 @@ class MetricsMiddleware:
             if self.reflection_agent:
                 try:
                     logger.info("🤔 Reflecting on execution...")
+                    # Add timeout to prevent reflection agent from looping
+                    import asyncio
+                    
                     # We reconstruct a simple trajectory list from tool_calls for now
                     # since full logic requires parsing raw trajectory_data structure
-                    reflection = await self.reflection_agent.analyze_trajectory(
-                        task=task,
-                        trajectory=tool_calls,
-                        score=score_result.total
+                    reflection = await asyncio.wait_for(
+                        self.reflection_agent.analyze_trajectory(
+                            task=task,
+                            trajectory=tool_calls,
+                            score=score_result.total
+                        ),
+                        timeout=30.0  # 30 second timeout for reflection
                     )
                     # Validate reflection result
                     if not reflection or not isinstance(reflection, dict):
@@ -148,7 +161,22 @@ class MetricsMiddleware:
                         logger.warning("Reflection missing required 'critique' field")
                         reflection = None
                     else:
+                        # FIX: Add max_iterations flag to reflection if loop was detected
+                        if callback._loop_detected:
+                            reflection["max_iterations_exceeded"] = True
+                            reflection["failure_reason"] = "Infinite loop: repeated identical tool calls"
+                            reflection["critique"] = (
+                                f"[INFINITE LOOP DETECTED] {reflection['critique']}\n\n"
+                                f"⚠️ CRITICAL: Agent stuck in infinite loop (same tool repeated consecutively). "
+                                f"This was likely caused by: 1) Wrong selector returning empty results, "
+                                f"2) Retrying same approach without changing strategy, "
+                                f"3) Not recognizing empty results as failures. "
+                                f"Planner should avoid this exact selector/approach."
+                            )
                         logger.info(f"✅ Reflection complete: {reflection.get('critique', '')[:80]}...")
+                except asyncio.TimeoutError:
+                    logger.error("❌ Reflection timed out after 30 seconds (possible nested loop)")
+                    reflection = None
                 except Exception as e:
                     logger.error(f"❌ Reflection failed: {e}", exc_info=True)
                     reflection = None

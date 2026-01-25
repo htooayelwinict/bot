@@ -1,7 +1,7 @@
 ---
 name: facebook-automation
 description: Facebook automation including posting with privacy settings, interactions, messaging, and navigation workflows
-allowed-tools: browser_navigate browser_click browser_type browser_fill_form browser_get_snapshot browser_screenshot browser_wait browser_navigate_back browser_get_page_info browser_hover browser_press_key browser_evaluate browser_scroll write_todos
+allowed-tools: browser_navigate browser_click browser_type browser_fill_form browser_get_snapshot browser_screenshot browser_wait browser_navigate_back browser_get_page_info browser_hover browser_press_key browser_evaluate browser_scroll write_todos browser_extract_posts
 ---
 
 # Facebook Automation Skill
@@ -204,6 +204,110 @@ browser_hover(ref="e28")
 ---
 
 ## Selector Patterns
+
+---
+
+## Facebook Post Selectors (CRITICAL - 2025)
+
+**⚠️ WRONG SELECTORS (Don't Use):**
+- `article` - Facebook doesn't use semantic HTML articles
+- `div[role="article"]` - Posts don't have this ARIA role
+- `div[data-ad-preview="message"]` - Only works for ads, not organic posts
+
+**✅ CORRECT SELECTORS FOR FACEBOOK POSTS (2025):**
+
+### Method 1: data-testid Selectors (Most Reliable)
+
+```python
+# Feed container
+"div[role='feed']"
+
+# Individual posts
+"div[data-testid='feed_story']"
+
+# Post content elements
+"div[data-testid='post_message']"          # Post text
+"a[data-testid='story_author_link']"        # Author link
+"span[data-testid='story_timestamp']"       # Timestamp
+"img[data-testid='story_photo']"            # Post images
+"div[data-testid='feed_loading_indicator']" # Loading spinner (lazy load)
+```
+
+### Method 2: ARIA Role-Based Selectors (Resilient)
+
+```python
+# Use getByRole pattern (most stable against DOM changes)
+page.get_by_role("feed")                     # Feed container
+page.get_by_role("article")                  # Individual posts (if present)
+page.get_by_role("link", name="author")      # Author links
+page.get_by_role("img")                      # Images
+```
+
+### Method 3: ARIA Snapshot Refs (Preferred for Interaction)
+
+```python
+# 1. Get snapshot
+browser_get_snapshot()
+
+# 2. Parse snapshot YAML to find post refs
+# Posts appear as "generic" or custom roles with accessible names
+
+# 3. Use refs for precise interaction
+browser_click(ref="e42", force=True)
+```
+
+### Post Extraction Workflow (Full Example)
+
+```python
+# Step 1: Navigate to feed
+browser_navigate(url="https://www.facebook.com")
+browser_wait(time=2)
+
+# Step 2: Get initial snapshot
+browser_get_snapshot()
+
+# Step 3: Scroll to load more posts (lazy loading)
+browser_scroll(direction="down", amount=500)
+browser_wait(time=2)  # Wait for lazy load to complete
+
+# Step 4: Get fresh snapshot with new posts
+browser_get_snapshot()
+
+# Step 5: Extract posts using correct selectors
+posts = await page.locator("div[data-testid='feed_story']").all()
+
+# Step 6: Parse each post for content
+for post in posts:
+    author = post.locator("a[data-testid='story_author_link']")
+    text = post.locator("div[data-testid='post_message']")
+    timestamp = post.locator("span[data-testid='story_timestamp']")
+```
+
+### Lazy Loading Detection
+
+```python
+# Check if more posts are loading
+loading = await page.locator("div[data-testid='feed_loading_indicator']").count() > 0
+
+# Scroll until no new content appears
+prev_count = 0
+while True:
+    await page.locator("div[data-testid='feed_story']").count() == prev_count:
+        browser_scroll(direction="down", amount=500)
+        browser_wait(time=2)
+        current_count = await page.locator("div[data-testid='feed_story']").count()
+        if current_count == prev_count:
+            break  # No new posts loaded
+        prev_count = current_count
+```
+
+### Selector Priority (Use This Order)
+
+1. **data-testid** attributes (most stable) - `div[data-testid='feed_story']`
+2. **ARIA roles** - `div[role='feed']`
+3. **ARIA snapshot refs** - Use after `browser_get_snapshot()`
+4. **User-facing names** - `button="Post"`, `text="Like"`
+5. **CSS selectors** (last resort) - Brittle, breaks often
 
 ---
 

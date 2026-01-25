@@ -190,9 +190,11 @@ def register_all_tools() -> ToolRegistry:
         NavigateArgs,
         NavigateBackArgs,
         ScreenshotArgs,
+        ScrollArgs,
         browser_get_page_info,
         browser_navigate,
         browser_navigate_back,
+        browser_scroll,
         browser_screenshot,
     )
 
@@ -230,6 +232,15 @@ def register_all_tools() -> ToolRegistry:
             description="Get information about the current page",
             func=browser_get_page_info,
             args_schema=GetPageInfoArgs,
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="browser_scroll",
+            category=ToolCategory.navigation,
+            description="Scroll the page to trigger lazy loading or access off-screen content",
+            func=browser_scroll,
+            args_schema=ScrollArgs,
         )
     )
 
@@ -334,10 +345,12 @@ def register_all_tools() -> ToolRegistry:
     # Utilities tools
     from src.tools.utilities import (
         EvaluateArgs,
+        ExtractPostsArgs,
         GetConsoleMessagesArgs,
         GetNetworkRequestsArgs,
         GetSnapshotArgs,
         browser_evaluate,
+        browser_extract_posts,
         browser_get_console_messages,
         browser_get_network_requests,
         browser_get_snapshot,
@@ -390,6 +403,15 @@ def register_all_tools() -> ToolRegistry:
             description="Get console messages from the page",
             func=browser_get_console_messages,
             args_schema=GetConsoleMessagesArgs,
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="browser_extract_posts",
+            category=ToolCategory.utilities,
+            description="Extract Facebook posts from the current page using data-testid selectors",
+            func=browser_extract_posts,
+            args_schema=ExtractPostsArgs,
         )
     )
 

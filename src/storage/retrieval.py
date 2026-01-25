@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 async def retrieve_similar_trajectories(
     task: str,
     top_k: int = 3,
-    min_score: float = 0.4,  # Allow learning from lower-scored runs
-    min_similarity: float = 0.4,  # Match same workflow across different topics
+    min_score: float = 0.47,  # FIX: Filter to higher-quality runs only
+    min_similarity: float = 0.47,  # Match same workflow across different topics
     exclude_failed_patterns: bool = True,  # P1 FIX: Filter by reflection failures
     client: AsyncQdrantClient | None = None,
 ) -> list[dict[str, Any]]:
@@ -108,10 +108,11 @@ async def retrieve_similar_trajectories(
                 failure_penalty = len(failed_patterns) * 0.05  # -5% per failure
                 success_bonus = len(successful_patterns) * 0.02  # +2% per success
                 
-                # Combined quality rank (higher is better)
+                # FIX: Weight score over similarity to prioritize successful patterns
+                # TOGGLE: Revert to 0.4/0.4 to prioritize similarity over score
                 quality_rank = (
-                    trajectory_score * 0.4 +  # 40% weight on original score
-                    result.score * 0.4 +  # 40% weight on similarity
+                    trajectory_score * 0.7 +  # 70% weight on original score (SUCCESS)
+                    result.score * 0.2 +  # 20% weight on similarity (RELEVANCE)
                     success_bonus -
                     failure_penalty
                 )
@@ -132,13 +133,19 @@ async def retrieve_similar_trajectories(
 
         # P1 FIX: Sort by quality_rank (best first) and optionally filter heavy failures
         if exclude_failed_patterns:
-            # Deprioritize (but don't exclude) workflows with 3+ failures
-            formatted.sort(key=lambda x: (
-                0 if x.get("failed_pattern_count", 0) < 3 else 1,  # Low failures first
-                -x.get("quality_rank", 0)  # Then by quality rank descending
-            ))
+            # FIX: Only exclude workflows with MANY failed patterns (>5), not ALL
+            # Learning from failed patterns is CRITICAL for improvement
+            formatted = [f for f in formatted if f.get("failed_pattern_count", 0) <= 5]
+            # Then sort by quality rank
+            formatted.sort(key=lambda x: -x.get("quality_rank", 0))
         else:
             formatted.sort(key=lambda x: -x.get("quality_rank", 0))
+
+        # FIX: Lower quality_rank threshold to allow learning from failures
+        # TOGGLE: Set min_quality_rank to 0.0 to disable this filter
+        min_quality_rank = 0.40  # Lowered from 0.60 to allow failed pattern learning
+        if min_quality_rank > 0:
+            formatted = [f for f in formatted if f.get("quality_rank", 0) >= min_quality_rank]
 
         logger.info(
             f"Retrieved {len(formatted)} similar trajectories for task: {task[:50]}..."

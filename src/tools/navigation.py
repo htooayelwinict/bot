@@ -69,6 +69,25 @@ class GetPageInfoArgs(BaseModel):
     pass  # No arguments needed
 
 
+class ScrollArgs(BaseModel):
+    """Arguments for browser_scroll tool."""
+
+    direction: Literal["up", "down", "left", "right"] = Field(
+        default="down",
+        description="Direction to scroll",
+    )
+    amount: int = Field(
+        default=500,
+        ge=0,
+        le=50000,
+        description="Number of pixels to scroll (default 500px, approx one post height)",
+    )
+    behavior: Literal["auto", "smooth"] = Field(
+        default="smooth",
+        description="Scrolling behavior (smooth is recommended for lazy-loaded content)",
+    )
+
+
 # ============= Tool Functions =============
 
 
@@ -210,4 +229,78 @@ async def browser_get_page_info(page: Page = None) -> str:
         success=True,
         content=f"Page info (⚠️ external data):\n{wrapped_content}",
         data={**info, "suspicious_content": suspicious},
+    ).to_string()
+
+
+@async_session_tool
+async def browser_scroll(
+    direction: str = "down",
+    amount: int = 500,
+    behavior: str = "smooth",
+    page: Page = None,
+) -> str:
+    """Scroll the page to trigger lazy loading or access off-screen content.
+
+    CRITICAL for Facebook posts: Posts are lazy-loaded. Use browser_scroll to load
+    more posts before calling browser_get_snapshot.
+
+    Args:
+        direction: Direction to scroll (up, down, left, right)
+        amount: Number of pixels to scroll (default 500px ≈ one post height)
+        behavior: Scrolling behavior (smooth recommended for lazy-loaded content)
+        page: Playwright Page object (injected by decorator)
+
+    Returns:
+        Success message with scroll position and new viewport info
+
+    Example workflow for loading more posts:
+        browser_scroll(direction="down", amount=500)  # Scroll down
+        browser_wait(time=2)  # Wait for lazy load
+        browser_get_snapshot()  # Get fresh snapshot with new posts
+    """
+    # Build scroll options
+    scroll_options = {
+        "behavior": behavior,
+    }
+
+    # Calculate scroll delta
+    delta = amount if direction in ["down", "right"] else -amount
+
+    # Get current scroll position before scrolling
+    before_info = await page.evaluate("""() => ({
+        scrollX: window.scrollX,
+        scrollY: window.scrollY,
+        scrollHeight: document.body.scrollHeight,
+        scrollWidth: document.body.scrollWidth
+    })""")
+
+    # Perform scroll
+    if direction in ["down", "up"]:
+        await page.evaluate(f"window.scrollBy({{top: {delta}, left: 0, behavior: '{behavior}'}})")
+    else:  # left or right
+        await page.evaluate(f"window.scrollBy({{top: 0, left: {delta}, behavior: '{behavior}'}})")
+
+    # Small wait to allow scroll to complete
+    await asyncio.sleep(0.3)
+
+    # Get new scroll position
+    after_info = await page.evaluate("""() => ({
+        scrollX: window.scrollX,
+        scrollY: window.scrollY,
+        scrollHeight: document.body.scrollHeight,
+        scrollWidth: document.body.scrollWidth
+    })""")
+
+    return ToolResult(
+        success=True,
+        content=f"Scrolled {direction} by {amount}px (behavior: {behavior})\n"
+        f"Position: X={after_info['scrollX']}, Y={after_info['scrollY']}\n"
+        f"Page size: {after_info['scrollWidth']}x{after_info['scrollHeight']}px",
+        data={
+            "direction": direction,
+            "amount": amount,
+            "behavior": behavior,
+            "before": before_info,
+            "after": after_info,
+        },
     ).to_string()

@@ -29,6 +29,49 @@ class TrajectoryCallbackHandler(BaseCallbackHandler):
             "latencies": [],
             "token_usage": [],
         }
+        self._loop_detected = False  # Flag for infinite loop detection
+        self._consecutive_empty_results = 0  # Track empty/useless results
+        self._same_tool_streak = {"tool": None, "count": 0}  # Track same tool repetition
+
+    def check_infinite_loop(self, max_repeated_calls: int = 5) -> bool:
+        """Detect infinite loops by checking for repeated tool calls.
+        
+        Checks if the same tool is being called repeatedly with similar inputs.
+        This helps detect stuck agents.
+        
+        Args:
+            max_repeated_calls: Max times same tool can repeat before flagging as loop (default: 5)
+        
+        Returns:
+            True if infinite loop detected, False otherwise
+        """
+        if self._loop_detected:
+            return True  # Already detected
+            
+        with self._lock:
+            # Look at last N tool calls
+            tool_calls = [e for e in self.trajectory if e.get("type") == "tool_start"]
+            
+            if len(tool_calls) < max_repeated_calls:
+                return False
+            
+            # Check last N calls
+            last_calls = tool_calls[-max_repeated_calls:]
+            
+            # All same tool?
+            tools = [c.get("tool") for c in last_calls]
+            if len(set(tools)) == 1:
+                # Same tool repeated
+                same_tool = tools[0]
+                
+                # Check if inputs are similar (not just same tool, but same params)
+                inputs = [c.get("input", "") for c in last_calls]
+                if len(set(str(i)[:100] for i in inputs)) == 1:
+                    # Same tool with same/similar inputs = LOOP!
+                    self._loop_detected = True
+                    return True
+        
+        return False
 
     def on_tool_start(
         self,
@@ -86,33 +129,83 @@ class TrajectoryCallbackHandler(BaseCallbackHandler):
 
             # Detect if output indicates an error (tools return error strings)
             is_error = self._is_error_output(output)
-
+            
+            # Detect empty/useless results that indicate stuck behavior
+            is_empty = self._is_empty_result(output)
+            
             # Find matching tool_start event
+            tool_name = None
             for event in reversed(self.trajectory):
                 if (
                     event.get("type") == "tool_start"
                     and event.get("status") == "in_progress"
                     and event.get("run_id") == str(run_id)
                 ):
+                    tool_name = event.get("tool")
                     event["output"] = output
                     event["end_time"] = end_time
                     event["latency"] = end_time - event["start_time"]
-                    event["status"] = "failed" if is_error else "success"
+                    # Mark as failed if error OR consistently empty
+                    event["status"] = "failed" if (is_error or is_empty) else "success"
                     # Track metrics
-                    self.tool_metrics["tool_success"].append(not is_error)
+                    self.tool_metrics["tool_success"].append(not (is_error or is_empty))
                     self.tool_metrics["latencies"].append(event["latency"])
-                    return
-
-            # Orphaned tool_end (shouldn't happen)
-            self.trajectory.append(
-                {
-                    "type": "tool_end_orphan",
-                    "output": output,
-                    "end_time": end_time,
-                    "status": "failed" if is_error else "success",
-                    "run_id": str(run_id),
-                }
-            )
+                    break
+            
+            if tool_name is None:
+                # Orphaned tool_end (shouldn't happen)
+                self.trajectory.append(
+                    {
+                        "type": "tool_end_orphan",
+                        "output": output,
+                        "end_time": end_time,
+                        "status": "failed" if (is_error or is_empty) else "success",
+                        "run_id": str(run_id),
+                    }
+                )
+                return
+            
+            # RUNTIME LOOP DETECTION: Check for stuck patterns
+            # Track empty results
+            if is_empty:
+                self._consecutive_empty_results += 1
+            else:
+                self._consecutive_empty_results = 0
+            
+            # Track same tool repetition
+            if tool_name == self._same_tool_streak["tool"]:
+                self._same_tool_streak["count"] += 1
+            else:
+                self._same_tool_streak = {"tool": tool_name, "count": 1}
+            
+            # ABORT CRITERIA: Raise exception to stop agent execution
+            # 1. Same tool with empty results 4+ times in a row
+            if self._consecutive_empty_results >= 5:
+                self._loop_detected = True
+                raise RuntimeError(
+                    f"🛑 INFINITE LOOP DETECTED: Tool '{tool_name}' returned empty/useless results "
+                    f"{self._consecutive_empty_results} times consecutively. Aborting execution to prevent waste."
+                )
+            
+            # 2. Same tool called 6+ times in a row (regardless of output)
+            if self._same_tool_streak["count"] >= 6:
+                self._loop_detected = True
+                raise RuntimeError(
+                    f"🛑 INFINITE LOOP DETECTED: Tool '{tool_name}' called "
+                    f"{self._same_tool_streak['count']} times in a row. Aborting execution."
+                )
+            
+            # 3. Check for repeated identical calls (original check)
+            if len(self.trajectory) >= 5:
+                recent_tools = [e.get("tool") for e in self.trajectory[-5:] if e.get("type") == "tool_start"]
+                recent_inputs = [str(e.get("input", ""))[:100] for e in self.trajectory[-5:] if e.get("type") == "tool_start"]
+                
+                if len(recent_tools) >= 5 and len(set(recent_tools)) == 1 and len(set(recent_inputs)) == 1:
+                    self._loop_detected = True
+                    raise RuntimeError(
+                        f"🛑 INFINITE LOOP DETECTED: Same tool '{tool_name}' with identical inputs "
+                        f"repeated 5+ times. Aborting execution."
+                    )
 
     def _is_error_output(self, output: str | dict | Any) -> bool:
         """Detect if tool output indicates an error.
@@ -154,6 +247,59 @@ class TrajectoryCallbackHandler(BaseCallbackHandler):
         ]
 
         return any(pattern in output_lower for pattern in error_patterns)
+    
+    def _is_empty_result(self, output: str | dict | Any) -> bool:
+        """Detect if tool output is empty/useless (indicates stuck behavior).
+        
+        Args:
+            output: Tool output string or dict
+            
+        Returns:
+            True if output is empty, None, [], {}, or other useless result
+        """
+        if output is None:
+            return True
+        
+        # Handle dict outputs
+        if isinstance(output, dict):
+            result = output.get("result")
+            # Check if result field is empty
+            if result is None or result == [] or result == {} or result == "":
+                return True
+            # Check full dict
+            if not output or output == {}:
+                return True
+            return False
+        
+        # Handle list outputs
+        if isinstance(output, list):
+            return len(output) == 0
+        
+        # Handle string outputs
+        if isinstance(output, str):
+            output_stripped = output.strip()
+            # Empty or just whitespace
+            if not output_stripped:
+                return True
+            # Common empty result patterns
+            empty_patterns = [
+                "none",
+                "null",
+                "[]",
+                "{}",
+                "result: none",
+                "result: null",
+                "result: []",
+                "<<<js_result_start>>>\nnone\n<<<js_result_end>>>",
+                "<<<js_result_start>>>\nnull\n<<<js_result_end>>>",
+                "<<<js_result_start>>>\n[]\n<<<js_result_end>>>",
+            ]
+            output_lower = output_stripped.lower()
+            for pattern in empty_patterns:
+                if pattern in output_lower:
+                    return True
+        
+        return False
 
 
     def on_tool_error(
