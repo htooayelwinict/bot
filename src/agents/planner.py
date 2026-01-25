@@ -4,9 +4,9 @@ Retrieves similar historical workflows and crafts success plans
 to guide the execution agent using DeepAgents framework with Grok reasoning model.
 """
 
-import os
-import logging
 import json
+import logging
+import os
 import re
 from typing import Any
 
@@ -73,7 +73,10 @@ Be concise and focus on proven patterns that worked.
 ## Important Guidelines
 
 - Focus on the tool sequences and parameters that worked
-- PRESERVE specific refs/selectors from successful workflows (e.g., ref="e42")
+- FIX: DO NOT preserve refs - they become stale across sessions (Facebook uses dynamic refs)
+- TOGGLE: Uncomment below to enable ref preservation (may cause stale ref issues)
+# - PRESERVE specific refs/selectors from successful workflows (e.g., ref="e42")
+- Preserve ELEMENT NAMES and PATTERNS instead (e.g., "Your profile button", "privacy menu")
 - Note any failed patterns to AVOID
 - Keep steps actionable and specific
 """
@@ -134,8 +137,8 @@ Be concise and focus on proven patterns that worked.
         similar = await retrieve_similar_trajectories(
             task=task,
             top_k=top_k,
-            min_score=0.4,  # Allow learning from lower-scored runs
-            min_similarity=0.4,  # Match same workflow across different topics
+            min_score=0.47,  # Filter to higher-quality runs
+            min_similarity=0.47,  # Match same workflow across different topics
             exclude_failed_patterns=True,  # P1 FIX: Deprioritize failed workflows
             client=self.qdrant_client,
         )
@@ -179,13 +182,13 @@ Be concise and focus on proven patterns that worked.
                 if plan_content:
                     # Parse JSON plan
                     plan_data = self._parse_json_result(plan_content)
-                    
+
                     # Convert to string for legacy compatibility (we'll update consumer later)
                     # OR return the raw dict if we update the consumer first
                     # For now, let's keep the return type as "string" but containing JSON,
                     # or better: update the return type hint to Any or dict.
                     # Given the plan says "Inject plan as JSON object", we should return dict.
-                    
+
                     logger.info(f"Generated structured success plan for task: {task[:50]}...")
                     return json.dumps(plan_data, indent=2)
 
@@ -250,7 +253,7 @@ Structure:
                     return json.loads(match.group(1))
                 except json.JSONDecodeError:
                     pass
-            
+
             # Use raw fallback if needed
             return {
                 "analysis": "Failed to parse structured plan",
@@ -260,7 +263,7 @@ Structure:
 
     def _format_workflows(self, workflows: list[dict[str, Any]]) -> str:
         """Format workflows for prompt injection with full tool parameters.
-        
+
         CRITICAL: Preserves input parameters (selectors, refs, text) for LLM consumption.
         This enables the execution agent to reuse working selectors instead of trial-and-error.
         """
@@ -268,14 +271,14 @@ Structure:
         for i, w in enumerate(workflows, 1):
             task = w.get("task", "Unknown")
             score = w.get("score", 0.0)
-            
+
             # Extract tool calls with FULL parameters (P0 FIX)
             tool_calls = w.get("tool_calls", [])
-            
+
             # Extract working selectors from successful tool calls
             working_selectors = []
             detailed_steps = []
-            
+
             for j, tc in enumerate(tool_calls[:20], 1):  # Limit to 20 most relevant
                 # Handle case where tc might be a string instead of dict
                 if isinstance(tc, str):
@@ -284,11 +287,11 @@ Structure:
                 if not isinstance(tc, dict):
                     detailed_steps.append(f"{j}. {str(tc)}")
                     continue
-                    
+
                 tool_name = tc.get("tool", "unknown").replace("browser_", "")
                 inputs = tc.get("input", {})
                 success = tc.get("success", True)
-                
+
                 # Handle case where inputs is a string instead of dict
                 if isinstance(inputs, str):
                     status_marker = "✓" if success else "✗"
@@ -297,42 +300,37 @@ Structure:
                 if not isinstance(inputs, dict):
                     detailed_steps.append(f"{j}. {tool_name}()")
                     continue
-                
+
                 # Build detailed step with parameters
                 if inputs:
                     # Extract key parameters for different tool types
                     param_parts = []
-                    
-                    # Selector/ref (critical for click, type, etc.)
-                    if "ref" in inputs:
-                        param_parts.append(f'ref="{inputs["ref"]}"')
-                        if success:
-                            working_selectors.append({
-                                "tool": tool_name,
-                                "ref": inputs["ref"],
-                                "element": inputs.get("element", "unknown")
-                            })
-                    
+
+                    # FIX: Don't show refs in trace - they're stale across sessions
+                    # TOGGLE: Uncomment below to show refs in trace
+                    # if "ref" in inputs:
+                    #     param_parts.append(f'ref="{inputs["ref"]}"')
+
+                    # Element description (preserved instead of ref)
+                    if "element" in inputs:
+                        param_parts.append(f'element="{inputs["element"]}"')
+
                     # URL for navigation
                     if "url" in inputs:
                         param_parts.append(f'url="{inputs["url"]}"')
-                    
+
                     # Text content (truncate if long)
                     if "text" in inputs:
                         text_val = inputs.get("text", "")
                         text_preview = str(text_val)[:50] + "..." if len(str(text_val)) > 50 else str(text_val)
                         param_parts.append(f'text="{text_preview}"')
-                    
-                    # Element description
-                    if "element" in inputs:
-                        param_parts.append(f'element="{inputs["element"]}"')
-                    
+
                     params_str = ", ".join(param_parts) if param_parts else "..."
                     status_marker = "✓" if success else "✗"
                     detailed_steps.append(f"{j}. {status_marker} {tool_name}({params_str})")
                 else:
                     detailed_steps.append(f"{j}. {tool_name}()")
-            
+
             # Format working selectors section
             selectors_section = ""
             if working_selectors:
@@ -346,17 +344,26 @@ Structure:
             failed_patterns = reflection.get("failed_patterns", [])
             successful_patterns = reflection.get("successful_patterns", [])
             
+            # FIX: Highlight max_iterations failures prominently
+            max_iters_flag = ""
+            if reflection.get("max_iterations_exceeded"):
+                max_iters_flag = (
+                    "\n🚨 ⚠️ CRITICAL FAILURE: Agent hit max_iterations (infinite loop)\n"
+                    f"   Reason: {reflection.get('failure_reason', 'Unknown infinite loop')}\n"
+                    f"   Solution: Use different selectors or approach\n"
+                )
+
             warnings = ""
             if failed_patterns:
                 warnings = "\n⚠️ AVOID THESE FAILED PATTERNS:\n" + "\n".join([f"  - {p}" for p in failed_patterns[:5]])
-            
+
             successes = ""
             if successful_patterns:
                 successes = "\n✅ SUCCESSFUL PATTERNS:\n" + "\n".join([f"  - {p}" for p in successful_patterns[:5]])
 
             formatted.append(
                 f"═══════════════════════════════════════════════════════\n"
-                f"WORKFLOW #{i} (Score: {score:.2f})\n"
+                f"WORKFLOW #{i} (Score: {score:.2f}){max_iters_flag}\n"
                 f"═══════════════════════════════════════════════════════\n"
                 f"Task: {task}\n"
                 f"{selectors_section}"

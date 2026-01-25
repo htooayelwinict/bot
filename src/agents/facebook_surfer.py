@@ -227,6 +227,14 @@ browser_get_snapshot()  # REQUIRED - all previous refs are stale
 ❌ **Selecting but not confirming** - Must click "Done" after selecting privacy option
 ❌ **Using browser_evaluate to click** - Causes infinite loops! Use browser_click with ref instead
 ❌ **Repeating failed patterns** - If same action fails 2x, try different approach (DON'T retry 25+ times)
+❌ **INFINITE LOOPS on selectors** - If a selector returns None/empty 3 times: STOP, log "Selector failed", try alternative or abort
+
+## LOOP-BREAKING RULES (CRITICAL)
+- **Max retries per selector**: 3 attempts
+- **If selector returns empty**: Try 1 alternative, then give up
+- **If same tool fails 3x**: Change strategy immediately - don't retry same action
+- **Monitor your own calls**: If you see the same tool call repeated 5+ times = STOP and try different approach
+- **On repeated failures**: Scroll more, use different selector, or conclude "posts not found on this profile"
 
 ## SKILLS CONTEXT
 When you receive a SKILL file, it provides:
@@ -346,10 +354,89 @@ Execute this task following the success plan above."""
         if callbacks_list:
             config["callbacks"] = callbacks_list
 
-        result = await self.agent.ainvoke(
-            {"messages": [{"role": "user", "content": enhanced_task}]},
-            config=config,
-        )
+        try:
+            result = await self.agent.ainvoke(
+                {"messages": [{"role": "user", "content": enhanced_task}]},
+                config=config,
+            )
+        except Exception as e:
+            # Check if this is a max_iterations exceeded error
+            if "max_iterations" in str(e).lower() or "recursion" in str(e).lower():
+                logger.error(
+                    f"❌ Agent hit max_iterations limit (50 steps). Task incomplete.\n"
+                    f"   Task: {task[:100]}...\n"
+                    f"   Error: {e}"
+                )
+                
+                # CRITICAL: Store failure in RAG with reflection so planner learns
+                if metrics_callback is not None and self.metrics_middleware is not None:
+                    logger.info("📝 Capturing failure trajectory for RAG learning...")
+                    try:
+                        trajectory_data = {"trajectory": metrics_callback.get_trajectory()}
+                        
+                        # Get trajectory for reflection
+                        trajectory = trajectory_data.get("trajectory", {})
+                        
+                        # Store with max_iterations flag so planner knows this approach failed
+                        trajectory["max_iterations_exceeded"] = True
+                        trajectory["failure_reason"] = "Infinite loop: repeated selector retries or complex task"
+                        
+                        # Process and store
+                        metrics_result = await self.metrics_middleware.process_execution(
+                            task=task,
+                            trajectory_data={"trajectory": trajectory},
+                            callback=metrics_callback,
+                        )
+                        
+                        if metrics_result.get("stored"):
+                            logger.info("✅ Failure trajectory stored in RAG for planner learning")
+                        else:
+                            logger.warning(f"⚠️  Failed to store failure trajectory: {metrics_result.get('rejection_reason')}")
+                    except Exception as store_error:
+                        logger.warning(f"Failed to store failure trajectory: {store_error}")
+                
+                raise RuntimeError(
+                    f"Agent exceeded maximum iterations (50). Task did not complete. "
+                    f"This usually means: selector not found, infinite loop detected, or task is too complex."
+                ) from e
+            
+            # Check for infinite loop detection from middleware
+            if "infinite loop" in str(e).lower():
+                logger.error(
+                    f"❌ INFINITE LOOP DETECTED. Task aborted.\n"
+                    f"   Task: {task[:100]}...\n"
+                    f"   Error: {e}"
+                )
+                
+                # Store failure in RAG
+                if metrics_callback is not None and self.metrics_middleware is not None:
+                    logger.info("📝 Capturing infinite loop trajectory for RAG learning...")
+                    try:
+                        trajectory_data = {"trajectory": metrics_callback.get_trajectory()}
+                        trajectory = trajectory_data.get("trajectory", {})
+                        trajectory["infinite_loop_detected"] = True
+                        trajectory["failure_reason"] = "Repeated identical tool calls detected"
+                        
+                        metrics_result = await self.metrics_middleware.process_execution(
+                            task=task,
+                            trajectory_data={"trajectory": trajectory},
+                            callback=metrics_callback,
+                        )
+                        
+                        if metrics_result.get("stored"):
+                            logger.info("✅ Infinite loop trajectory stored in RAG")
+                        else:
+                            logger.warning(f"⚠️  Failed to store infinite loop trajectory: {metrics_result.get('rejection_reason')}")
+                    except Exception as store_error:
+                        logger.warning(f"Failed to store infinite loop trajectory: {store_error}")
+                
+                raise RuntimeError(
+                    "Agent detected in infinite loop (same tool repeated 5+ times). "
+                    "Task aborted. Failure recorded in RAG for learning."
+                ) from e
+            
+            # Re-raise other exceptions
+            raise
 
         # Process metrics after execution
         # Use original task (not enhanced) for metrics storage

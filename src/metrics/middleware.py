@@ -89,6 +89,21 @@ class MetricsMiddleware:
             ... )
         """
         try:
+            # 0. CHECK FOR INFINITE LOOPS - Early detection
+            if callback.check_infinite_loop(max_repeated_calls=5):
+                logger.error(
+                    "❌ INFINITE LOOP DETECTED: Agent stuck in repeated tool calls. "
+                    "Aborting execution and storing failure trajectory."
+                )
+                # Note: trajectory_data is a list, not a dict. We can't modify its structure.
+                # Instead, the loop detection flag is tracked in the callback handler.
+                
+                # Force rejection but still try to store with failure flag
+                raise RuntimeError(
+                    "Agent detected in infinite loop (same tool call repeated 5+ times). "
+                    "Task aborted. Failure recorded in RAG for learning."
+                )
+            
             # 1. Calculate score
             metrics = callback.get_metrics()
             score_result = calculate_score(
@@ -118,9 +133,9 @@ class MetricsMiddleware:
                 }
 
             # 3. Summarize trajectory for embedding
-            # Extract tool calls from trajectory data
+            # Extract tool calls from trajectory data (trajectory_data is a list)
             tool_calls = self._extract_tool_calls(trajectory_data)
-            logger.info(f"🔍 Extracted {len(tool_calls)} tool calls from {len(trajectory_data.get('trajectory', []))} trajectory events")
+            logger.info(f"🔍 Extracted {len(tool_calls)} tool calls from {len(trajectory_data)} trajectory events")
 
             summary = summarize_trajectory(
                 task=task,
@@ -148,6 +163,16 @@ class MetricsMiddleware:
                         logger.warning("Reflection missing required 'critique' field")
                         reflection = None
                     else:
+                        # FIX: Add max_iterations flag to reflection if loop was detected
+                        if callback._loop_detected:
+                            reflection["max_iterations_exceeded"] = True
+                            reflection["failure_reason"] = "Infinite loop: repeated identical tool calls"
+                            reflection["critique"] = (
+                                f"[INFINITE LOOP DETECTED] {reflection['critique']}\n\n"
+                                f"⚠️ CRITICAL: Agent stuck in infinite loop (same tool repeated 5+ times). "
+                                f"This was likely caused by repeated selector retries or infinite retry loops. "
+                                f"Planner should avoid this approach and use different selectors/strategies."
+                            )
                         logger.info(f"✅ Reflection complete: {reflection.get('critique', '')[:80]}...")
                 except Exception as e:
                     logger.error(f"❌ Reflection failed: {e}", exc_info=True)

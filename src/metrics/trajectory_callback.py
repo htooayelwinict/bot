@@ -29,6 +29,47 @@ class TrajectoryCallbackHandler(BaseCallbackHandler):
             "latencies": [],
             "token_usage": [],
         }
+        self._loop_detected = False  # Flag for infinite loop detection
+
+    def check_infinite_loop(self, max_repeated_calls: int = 5) -> bool:
+        """Detect infinite loops by checking for repeated tool calls.
+        
+        Checks if the same tool is being called repeatedly with similar inputs.
+        This helps detect stuck agents.
+        
+        Args:
+            max_repeated_calls: Max times same tool can repeat before flagging as loop (default: 5)
+        
+        Returns:
+            True if infinite loop detected, False otherwise
+        """
+        if self._loop_detected:
+            return True  # Already detected
+            
+        with self._lock:
+            # Look at last N tool calls
+            tool_calls = [e for e in self.trajectory if e.get("type") == "tool_start"]
+            
+            if len(tool_calls) < max_repeated_calls:
+                return False
+            
+            # Check last N calls
+            last_calls = tool_calls[-max_repeated_calls:]
+            
+            # All same tool?
+            tools = [c.get("tool") for c in last_calls]
+            if len(set(tools)) == 1:
+                # Same tool repeated
+                same_tool = tools[0]
+                
+                # Check if inputs are similar (not just same tool, but same params)
+                inputs = [c.get("input", "") for c in last_calls]
+                if len(set(str(i)[:100] for i in inputs)) == 1:
+                    # Same tool with same/similar inputs = LOOP!
+                    self._loop_detected = True
+                    return True
+        
+        return False
 
     def on_tool_start(
         self,
