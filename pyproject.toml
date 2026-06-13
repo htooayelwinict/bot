@@ -19,11 +19,11 @@ dependencies = [
 [project.optional-dependencies]
 # Phase 2+ dependencies
 agent = [
-    "deepagents>=0.1.0",
-    "langchain>=0.3.0",
-    "langchain-openai>=0.2.0",
-    "langgraph>=0.2.0",
-    "openai>=1.54.0",
+    "deepagents>=0.6.10,<0.7.0",
+    "langchain>=1.3.9,<2.0.0",
+    "langchain-openai>=1.3.2,<2.0.0",
+    "langgraph>=1.2.5,<2.0.0",
+    "openai>=1.54.0,<3.0.0",
     "pillow>=10.0.0",
 ]
 # Phase 4 dependencies

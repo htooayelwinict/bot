@@ -12,7 +12,9 @@ build/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.opencode/
 
+AGENTS.md
 # Virtual environments
 .venv/
 venv/

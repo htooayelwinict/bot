@@ -12,7 +12,7 @@ class ReflectionAgent:
 
     def __init__(
         self,
-        model: str = "openrouter/x-ai/grok-4.1-fast",
+        model: str = "openrouter/x-ai/grok-4.3",
         temperature: float = 0.0,
         api_key: str | None = None,
     ):

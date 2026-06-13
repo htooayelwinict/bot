@@ -140,7 +140,7 @@ Centralized OpenRouter ChatOpenAI configuration:
 from src.agents.utils import create_openrouter_llm
 
 llm = create_openrouter_llm(
-    model="x-ai/grok-4.1-fast",
+    model="x-ai/grok-4.3",
     temperature=0.0,
     api_key=None,  # Uses OPENROUTER_API_KEY env var
     app_title="MyAgent",

@@ -30,14 +30,14 @@ class PlanningAgent:
 
     def __init__(
         self,
-        model: str = "x-ai/grok-4.1-fast",  # Fast reasoning model
+        model: str = "x-ai/grok-4.3",  # Reasoning model
         qdrant_client: AsyncQdrantClient | None = None,
         api_key: str | None = None,
     ):
         """Initialize the planning agent.
 
         Args:
-            model: Model name for planning (default: x-ai/grok-4.1-fast).
+            model: Model name for planning (default: x-ai/grok-4.3).
             qdrant_client: Optional Qdrant client for retrieval.
             api_key: OpenRouter API key (defaults to OPENROUTER_API_KEY env var).
         """

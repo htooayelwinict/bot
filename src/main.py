@@ -359,6 +359,27 @@ async def run_single_task_async(agent: FacebookSurferAgent, task: str, stream: b
     else:
         # Non-stream mode
         result = await agent.invoke(task, thread_id=thread_id)
+        plan_context = agent.get_last_planning_context() if hasattr(agent, "get_last_planning_context") else {}
+        if plan_context.get("enabled"):
+            click.echo("\n🧠 Planning summary:")
+            if not plan_context.get("planner_available"):
+                click.secho("   ⚠️  Planner unavailable. Skipping planning.", fg="yellow")
+            elif not plan_context.get("attempted"):
+                click.secho("   ⚠️  Planner was not attempted.", fg="yellow")
+            elif plan_context.get("plan_found"):
+                click.secho("   ✅ Historical success plan injected.", fg="green")
+                plan_text = (plan_context.get("plan_text") or "").strip()
+                if plan_text:
+                    click.echo("   📝 Plan preview:")
+                    plan_lines = plan_text.splitlines()
+                    for line in plan_lines[:12]:
+                        if line.strip():
+                            click.echo(f"      {line}")
+                    if len(plan_lines) > 12:
+                        click.secho(f"      ... ({len(plan_lines) - 12} more lines)", dim=True)
+            else:
+                click.secho("   ⚠️  No similar historical workflows found; running with cold start.", fg="yellow")
+
         click.echo("\nResult:")
         if "messages" in result and result["messages"]:
             latest_msg = result["messages"][-1]
@@ -434,14 +455,18 @@ def cli():
 @click.option("--profile", default="./profiles/facebook", help="Path to Facebook profile")
 def login(profile: str):
     """Create or restore Facebook session."""
-    with init_session(login=True, profile=profile):
-        click.echo("\n✅ Session established successfully")
-        click.echo("Press Ctrl+C to exit...")
+    async def _login():
+        async with async_init_session(login=True, profile=profile):
+            click.echo("\n✅ Session established successfully")
+            click.echo("Press Ctrl+C to exit...")
 
-        try:
-            click.pause()
-        except KeyboardInterrupt:
-            click.echo("\nClosing session...")
+            try:
+                # Keep the session alive indefinitely until user exits.
+                await asyncio.Event().wait()
+            except KeyboardInterrupt:
+                click.echo("\nClosing session...")
+
+    asyncio.run(_login())
 
 
 @cli.command()
@@ -449,7 +474,7 @@ def login(profile: str):
 @click.option("--stream", is_flag=True, help="Stream execution in real-time")
 @click.option("--debug", is_flag=True, help="Enable detailed debug output (shows all events, nodes, tool calls)")
 @click.option("--thread", default="default", help="Conversation thread ID")
-@click.option("--model", default="openrouter/mistralai/devstral-2512:free", help="Model to use (format: openrouter/<model_name>)")
+@click.option("--model", default="openrouter/qwen/qwen3-coder-next", help="Model to use (format: openrouter/<model_name>)")
 @click.option("--no-banner", is_flag=True, help="Skip banner display")
 @click.option("--enable-metrics", is_flag=True, help="Enable trajectory capture, scoring, and storage")
 @click.option("--enable-planning", is_flag=True, help="Enable RAG-based planning from historical workflows")
